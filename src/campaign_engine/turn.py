@@ -109,6 +109,29 @@ def pending_path():
     return own_file(PENDING)
 
 
+def _load_pending():
+    path = pending_path()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+
+
+def pending_items(p):
+    if not isinstance(p, dict):
+        return []
+    if 'items' in p:
+        return list(p['items'] or [])
+    return [p] if p.get('expect') is not None else []
+
+
+def pending_reply():
+    p = _load_pending()
+    return p.get('expect') if isinstance(p, dict) else None
+
+
 def note_read(state, text):
     """开着回合时，读命令（recall/find/show/look/items/ledger/pc/gm）读到的东西进本回合白名单。"""
     t = load_turn(state, required=False)
@@ -1303,6 +1326,8 @@ def gates(state, t, st, ctx, info):
         extra.append(('kit', '出了住处，随身包（' + I.kit_line(state).split('：', 1)[1] + '）还记在住处：'
                              '带了 turn do kit 身上，确实没带 turn do kit 住处'))
     extra += [('hand', x) for x in hand_gate(state, st, t['ops'])]
+    if issue := audience_split_issue(state, t['ops'], a.ruling, ents):
+        extra.append(('audience', issue))
     if a.narration:  # 正文在发给玩家之前查：仅保留幕后泄密、场外话、永久禁用套话硬拦
         leak = backstage_leak(ctx.backstage, a.ruling or '', a.narration)
         if leak:
@@ -1535,13 +1560,68 @@ def _commit(state, narration, attempt):
     result['changes'] = '；'.join(x for p in per for x in front(p))
     result['along'] = came_along(state, st, t['ops'])
     result['mech'] = mech
+    pending_info = _load_pending()
+    items = pending_items(pending_info)
+    if len(items) > 1:
+        ids = '、'.join(x.get('id', '') for x in items if x.get('id'))
+        result['notes'].append(f'本句已拆段提交（{ids}）；交付时请把各段完整原样连发')
     if 'reply_scene' in ev:
-        result['player_reply'] = R.for_event(ev)
+        result['player_reply'] = (pending_info.get('expect') if len(items) > 1 and pending_info else None) or R.for_event(ev)
     if notice:
         result['player_notice'] = notice
     result['backstage'] = backstage_lines(ctx)
     result['due'] = SC.due_lines(st)
     return result
+
+
+SETUP_ONLY_OPS = {'kit', 'put', 'hold', 'shape', 'equip', 'unequip'}
+
+
+def audience_split_issue(state0, ops, ruling, ents):
+    """一个事件只演一个场面、一组听众；中途换人须拆成两段提交。"""
+    pid = pov_id(state0)
+    present0 = {x for x in (state0.get('scene') or {}).get('present_entity_ids') or [] if x != pid}
+    face = {nid for nid, remote in G.reactors(ruling or '', ents).items() if not remote}
+    cur = set(present0)
+    active = False
+    left_after_active = False
+    saw_after_leave = False
+    left_all = set()
+    reentered = set()
+    entered_after_leave = set()
+    for o in ops or ():
+        op = o.get('op')
+        if op == 'leave':
+            nid = resolve(o.get('who'), ents)
+            if active:
+                left_after_active = True
+            if nid:
+                cur.discard(nid)
+                left_all.add(nid)
+        elif op == 'enter':
+            nid = resolve(o.get('who'), ents)
+            if left_after_active:
+                return '本回合在场面展开后先离场又进场了别的人物（听众已换）：请先提交到离场为止，再另开一段提交后半场'
+            if left_all and nid and nid not in present0:
+                entered_after_leave.add(nid)
+            if nid:
+                cur.add(nid)
+                if nid in left_all:
+                    reentered.add(nid)
+            if left_all:
+                saw_after_leave = True
+            active = True
+        else:
+            if left_all and op not in SETUP_ONLY_OPS:
+                saw_after_leave = True
+            if op not in SETUP_ONLY_OPS:
+                active = True
+    gone_spoke = (left_all - reentered) & face
+    if gone_spoke and entered_after_leave:
+        return '本回合与先离场的人物有当面交谈，随后又进场了新人（听众已换）：请拆成两段提交，先提交前半场，再开后半场'
+    if gone_spoke and cur and saw_after_leave:
+        return '本回合有当面开口的人物离场，其余人继续留在后面推进（听众已换）：请先提交到离场为止，再另开一段提交后续'
+    return None
 
 
 def presence(state0, st, ops, tx, ents):
@@ -1681,6 +1761,7 @@ def narrate(state, a):
         if p.get('session') and hook.get('session_id') and hook['session_id'] != p['session']:
             return None
     text = WAIT.sub('', text)  # 回合中途回过“（稍等）”的，不进正文（E1531）
+    items = pending_items(p) if p is not None else []
     if p is not None and p.get('canonical'):
         expected = p['expect']
         if text.strip() != expected:
@@ -1700,6 +1781,10 @@ def narrate(state, a):
         if hint:
             print(json.dumps({'systemMessage': hint}, ensure_ascii=False))
         return None
+    if p is not None and len(items) > 1:
+        if hook.get('stop_hook_active'):
+            return None
+        retry_reply(p['expect'])
     if p is not None and (len(text) < 15 or NOT_NARRATION.search(text)):
         if hook.get('stop_hook_active'):
             return None

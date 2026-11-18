@@ -980,11 +980,13 @@ def run(a):
         if a.reply_mode == 'ooc':
             out = reply.render(reply.snapshot(state), sys.stdin.read() if a.body == '-' else a.body)
         else:
-            event = T.last_event(state)
-            if a.id and a.id != event.get('id'):
-                from .store import read_events
-                event = next((row for row in reversed(read_events(state)) if row['id'] == a.id), {})
-            out = reply.for_event(event)
+            out = None if a.id else T.pending_reply()
+            if not out:
+                event = T.last_event(state)
+                if a.id and a.id != event.get('id'):
+                    from .store import read_events
+                    event = next((row for row in reversed(read_events(state)) if row['id'] == a.id), {})
+                out = reply.for_event(event)
             if not out:
                 raise SystemExit('找不到该回合的玩家回复')
     elif c == 'weather':
@@ -1143,5 +1145,10 @@ def admin(state, a):
     return f'{path} 改了 {len(pairs) // 2} 处'
 
 
-if __name__ == '__main__':
+def console_main():
     main()
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(console_main())

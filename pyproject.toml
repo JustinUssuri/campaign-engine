@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-campaign = "campaign_engine.cli:main"
+campaign = "campaign_engine.cli:console_main"
 campaign-hook = "campaign_engine.host_hooks:main"
 
 [tool.hatch.build.targets.wheel]

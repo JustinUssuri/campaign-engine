@@ -8,15 +8,52 @@ from .store import ROOT, atomic_write, load, locked, read_events, git_commit
 JOURNAL = ROOT / '.session' / 'commit.json'
 
 
+def _current_prompt_id():
+    from .session import own_path
+    receipt = own_path('prompt-receipt.json')
+    if not receipt.exists():
+        return None
+    try:
+        return json.loads(receipt.read_text(encoding='utf-8')).get('turn_id')
+    except (OSError, ValueError):
+        return None
+
+
+def _pending_payload(pending_file, session, prompt_id, item):
+    items = []
+    if pending_file.exists():
+        try:
+            prev = json.loads(pending_file.read_text(encoding='utf-8'))
+            same_session = not prev.get('session') or prev.get('session') == session
+            same_prompt = (prompt_id is None and prev.get('prompt_id') is None) or (
+                prompt_id is not None and prev.get('prompt_id') == prompt_id)
+            if same_session and same_prompt:
+                items = prev['items'] if 'items' in prev else [prev]
+        except (OSError, ValueError):
+            items = []
+    items = [x for x in items if x.get('id') != item.get('id')] + [item]
+    payload = {
+        'session': session,
+        'prompt_id': prompt_id,
+        'items': items,
+        'id': items[-1]['id'],
+        'expect': '\n\n'.join(x['expect'] for x in items),
+    }
+    if all(x.get('canonical') for x in items):
+        payload['canonical'] = True
+    return payload
+
+
 def prepare(state, ctx, event, info, checks, stale):
     from . import reply
     from .turn import pending_path
     from .session import session_id, hooked, turn_path
     expectation = None
     if hooked():
-        expectation = {'id': event['id'], 'session': session_id(), 'expect': reply.for_event(event)}
+        item = {'id': event['id'], 'expect': reply.for_event(event)}
         if 'reply_scene' in event:
-            expectation['canonical'] = True
+            item['canonical'] = True
+        expectation = _pending_payload(pending_path(), session_id(), _current_prompt_id(), item)
     data = {'event': event['id'], 'state': state, 'files': ctx.files, 'rolls': ctx.rolls,
             'secret_rolls': ctx.secret_rolls,
             'turn': str(turn_path().relative_to(ROOT)), 'pending': str(pending_path().relative_to(ROOT)),
