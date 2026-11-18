@@ -1,0 +1,10 @@
+goods:
+  longsword: {name: 长剑, unit: 把, kind: weapon, lb: 3, cp: 1500, cat: 武器, src: SRD5.2.1}
+  shortbow: {name: 短弓, unit: 把, kind: weapon, lb: 2, cp: 2500, cat: 武器, src: SRD5.2.1}
+  arrows: {name: 箭矢, unit: 支, kind: ammo, lb: 0.05, cp: 5, cat: 弹药, src: SRD5.2.1}
+  rations: {name: 干粮, unit: 份, kind: food, lb: 2, cp: 50, cat: 食物, src: SRD5.2.1}
+  torch: {name: 火把, unit: 根, kind: misc, lb: 1, cp: 1, cat: 杂物, src: SRD5.2.1}
+  bed-inn: {name: 旅店普通客房（一晚）, unit: 晚, kind: service, lb: 0, cp: 50, cat: 服务, src: SRD5.2.1}
+  ale: {name: 麦酒（一杯）, unit: 杯, kind: food, lb: 0, cp: 4, cat: 食物, src: SRD5.2.1}
+  misc: {name: 杂项物品, unit: 件, kind: misc, lb: 1, cp: 10, cat: 杂物, src: 通用}
+places: {}

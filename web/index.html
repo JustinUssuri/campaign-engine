@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaign Gallery</title>
+<link rel="stylesheet" href="/web/site.css">
+<style>
+  body { font-family: Georgia, "Noto Serif SC", serif; background: #1d1712; color: #eadbc4; }
+  main { padding: 16px; }
+  details { margin-bottom: 24px; }
+  summary { list-style: none; cursor: pointer; user-select: none; font-size: 1.4em; color: #f0c38e; border-bottom: 1px solid #4a3a2a; padding-bottom: 4px; margin-bottom: 12px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸"; display: inline-block; width: 1em; transition: transform .15s; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  summary small { font-size: .6em; color: #a8957c; margin-left: .5em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .grid a { display: block; text-decoration: none; color: #f0c38e; font-size: .85em; word-break: break-all; cursor: zoom-in; }
+  .grid img { width: 100%; height: auto; border-radius: 6px; background: #2b221a; display: block; margin-bottom: 4px; }
+  #lightbox { display: none; position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.9); cursor: zoom-out; }
+  #lightbox.on { display: flex; align-items: center; justify-content: center; }
+  #lightbox img { max-width: 96vw; max-height: 96vh; }
+</style>
+</head>
+<body>
+<nav class="cc-nav"><a href="/" class="on">图库</a><a href="/web/novel.html">小说</a><a href="/maps/atlas.html">战役地图</a><a href="/maps/battle.html">战场地图</a></nav>
+<main>
+<div id="gallery">加载中…</div>
+</main>
+<div id="lightbox"><img alt=""></div>
+<script>
+// 缩略图由 tools/thumbs.sh 生成在 assets/thumbs/；没有缩略图时退回原图
+// 缩略图总共不到 1 MB，不用 loading="lazy"：部分手机浏览器对未定尺寸的懒加载图首次不触发加载
+const box = document.getElementById("lightbox");
+const big = box.querySelector("img");
+const close = () => { box.classList.remove("on"); big.removeAttribute("src"); };
+box.onclick = close;
+document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+Promise.all([
+  fetch("/assets/", { headers: { Accept: "application/json" }, cache: "no-store" }).then(r => r.json()),
+  fetch("/web/campaign.json", { cache: "no-store" }).then(r => r.ok ? r.json() : {}).catch(() => ({}))
+])
+  .then(([files, cfg]) => {
+    if (cfg.title) document.title = cfg.title;
+    // 角色按出场顺序（文件名去掉 _vN 后的主题，可在 web/campaign.json 的 gallery_order 配置）；不在表里的排在后面，按修改时间新到旧
+    const order = Array.isArray(cfg.gallery_order) ? cfg.gallery_order : [];
+    const rank = f => { const i = order.indexOf(f.name.replace(/_v\d+\.[^.]+$/, "")); return i < 0 ? order.length : i; };
+    const imgs = files
+      .filter(f => !f.is_dir && /\.(png|jpe?g|webp|gif)$/i.test(f.name))
+      .sort((a, b) => rank(a) - rank(b) || new Date(b.mod_time) - new Date(a.mod_time));
+    // 分类按文件名前缀：scene_ 为场景图，其余为角色图
+    const groups = [["角色", imgs.filter(f => !f.name.startsWith("scene_"))],
+                    ["场景", imgs.filter(f => f.name.startsWith("scene_"))]];
+    const root = document.getElementById("gallery");
+    root.textContent = imgs.length ? "" : "暂无图片";
+    for (const [title, list] of groups) {
+      if (!list.length) continue;
+      // 折叠状态记在本机浏览器，读写失败就默认展开
+      const key = "gallery-closed-" + title;
+      const d = document.createElement("details");
+      try { d.open = localStorage.getItem(key) !== "1"; } catch { d.open = true; }
+      d.ontoggle = () => { try { localStorage.setItem(key, d.open ? "0" : "1"); } catch {} };
+      const sum = document.createElement("summary");
+      sum.textContent = title;
+      sum.insertAdjacentHTML("beforeend", "<small>" + list.length + "</small>");
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      d.append(sum, grid);
+      root.appendChild(d);
+      for (const f of list) {
+        const full = "/assets/" + encodeURIComponent(f.name);
+        const a = document.createElement("a");
+        a.href = full;
+        a.innerHTML = '<img decoding="async" alt=""><div></div>';
+        const img = a.querySelector("img");
+        img.onerror = () => { img.onerror = null; img.src = full; };
+        img.src = "/assets/thumbs/" + encodeURIComponent(f.name.replace(/\.[^.]+$/, "")) + ".webp";
+        a.querySelector("div").textContent = f.name;
+        a.onclick = e => { e.preventDefault(); big.src = full; box.classList.add("on"); };
+        grid.appendChild(a);
+      }
+    }
+  })
+  .catch(() => { document.getElementById("gallery").textContent = "图库加载失败"; });
+</script>
+</body>
+</html>

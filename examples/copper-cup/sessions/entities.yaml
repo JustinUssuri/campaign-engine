@@ -1,0 +1,11 @@
+locations:
+  loc-tawnwell: 陶恩井
+  loc-copper-cup: 铜杯旅店
+  loc-copper-cup-common-room: 铜杯旅店公共厅
+  loc-thalia-hidden-lair: 秘密山洞巢穴
+npcs:
+  npc-hubert: 休伯特
+  npc-raymond: 雷蒙德
+  npc-mira-001: [米拉, Mira]
+topics: {}
+items: {}

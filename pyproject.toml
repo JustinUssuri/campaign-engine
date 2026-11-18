@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "campaign-engine"
+version = "0.1.0"
+description = "D&D 5e long-form campaign engine for AI-hosted tabletop RPGs"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml>=6",
+  "jsonschema>=4",
+  "jsonpatch>=1.32",
+  "pyahocorasick>=2",
+  "ruamel.yaml>=0.18",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-xdist>=3",
+  "hypothesis>=6",
+  "syrupy>=4",
+  "ruff>=0.6",
+  "pyright>=1.1",
+]
+
+[project.scripts]
+campaign = "campaign_engine.cli:main"
+campaign-hook = "campaign_engine.host_hooks:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/campaign_engine"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"rules/srd" = "campaign_engine/data/rules/srd"
+"rules/travel.yaml" = "campaign_engine/data/rules/travel.yaml"
+"examples" = "campaign_engine/data/examples"
+"templates" = "campaign_engine/data/templates"
+"web" = "campaign_engine/data/web"
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E9", "F"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src/campaign_engine"]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"

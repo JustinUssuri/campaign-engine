@@ -1,0 +1,582 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas · 战役地图集</title>
+<link rel="stylesheet" href="/web/site.css">
+<link rel="stylesheet" href="/web/vendor/leaflet/leaflet.css">
+<style>
+/* Layout: tab row + one full-width Leaflet board + a legend line. Parchment look, same palette as the old campaign sheet.
+   Data: maps/atlas.json，由 tools/mapgen.py 从 world/map.yaml 和存档生成；这页只画，不算。 */
+:root {
+  --paper: #efe3c6; --paper-deep: #e2d1a8; --ink: #3b2a1a; --ink-soft: #7a6146;
+  --copper: #b0612c; --river: #4f7891;
+  --body: "Noto Serif SC", Georgia, "Songti SC", serif;
+  color-scheme: light;
+}
+html, body { background: var(--paper); color: var(--ink); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 14px 16px 32px; display: grid; gap: 10px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+h1 { font-weight: 400; font-size: 1.6rem; margin: 0; }
+.meta { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tabs button { font: inherit; color: var(--ink); background: var(--paper-deep); border: 1px solid var(--ink-soft);
+  border-radius: 6px; padding: 4px 14px; cursor: pointer; }
+.tabs button.on { background: var(--copper); color: #fff7ea; border-color: var(--copper); }
+.tabs button:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+#map { height: min(76vh, 900px); border: 1px solid var(--ink-soft); background: var(--paper-deep); }
+.leaflet-container { font-family: var(--body); background: #e8dab6; }
+.lbl { background: transparent; border: 0; box-shadow: none; color: var(--ink); font-size: 13px; padding: 0 4px;
+  text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper), 0 0 2px var(--paper); white-space: nowrap; }
+.lbl::before { display: none; }
+.lbl.t1 { font-weight: 700; font-size: 14px; }
+.lbl.here { color: var(--copper); font-weight: 700; }
+.lbl.far { color: var(--ink-soft); font-size: 12px; }
+.lbl.street { color: #6b5233; font-size: 11px; letter-spacing: .15em; }
+.lbl.area { color: #8a7352; font-size: 15px; font-style: italic; letter-spacing: .3em; }
+.lbl.water { color: #f5edda; font-size: 15px; font-weight: 700; text-shadow: 0 1px 2px #26353b; }
+.lbl.river { color: var(--river); font-size: 12px; font-style: italic; }
+.lbl.route { font-size: 12px; background: rgba(247,239,220,.85); border-radius: 3px; }
+.lbl.waypoint { font-size: 12px; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #f7efdc; color: var(--ink); }
+.leaflet-popup-content { margin: 10px 14px; font-size: 14px; }
+.leaflet-popup-content b { font-size: 15px; }
+.leaflet-popup-content small { color: var(--ink-soft); }
+.leaflet-popup-content a { color: var(--copper); }
+.scalebar { background: rgba(247,239,220,.85); border: 1px solid var(--ink-soft); padding: 2px 6px; font-size: 12px; }
+.scalebar i { display: block; height: 5px; background: var(--ink); margin-bottom: 2px; }
+.legend { color: var(--ink-soft); font-size: .9rem; margin: 0; }
+.legend a { color: var(--copper); }
+.floor-options { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; color: var(--ink-soft); font-size: 13px; }
+.floor-options[hidden] { display: none; }
+.floor-options label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.floor-options input { accent-color: var(--copper); }
+#map.textured-floor { background: #d4ccba; }
+#map.arid-floor { background: #d1ad90; }
+.arid-floor .lbl { background: rgba(247,228,202,.86); }
+.textured-floor .lbl { color: #302d25; background: rgba(245,238,220,.8); border-radius: 2px; padding: 0 4px; text-shadow: none; }
+.textured-floor .lbl.area { color: #4e4c3d; font-size: 13px; letter-spacing: .1em; }
+</style>
+
+<nav class="cc-nav"><a href="/">图库</a><a href="/web/novel.html">小说</a><a href="/maps/atlas.html" class="on">战役地图</a><a href="/maps/battle.html">战场地图</a></nav>
+<div class="wrap">
+  <header>
+    <h1>Atlas · 战役地图集</h1>
+    <div class="meta" id="meta"></div>
+  </header>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="floor-options" id="floor-options" hidden>
+    <label><input type="checkbox" id="floor-textures" checked>材质与纹理</label>
+    <span id="floor-context">去顶俯视 · 同比例分层</span>
+  </div>
+  <section id="fort-study" hidden aria-label="强盗堡新版结构图">
+    <div class="tabs" id="fort-sheets" aria-label="图纸选择"></div>
+    <p>完整期图和现状图沿用同一套建筑编号　<a id="fort-original" target="_blank" rel="noopener">打开原图放大</a></p>
+    <img id="fort-sheet" alt="强盗堡全堡结构平面" style="display:block;width:100%;height:auto;background:#faf7ee">
+  </section>
+  <div id="map"></div>
+  <p class="legend" id="legend"></p>
+</div>
+
+<script src="/web/vendor/leaflet/leaflet.js"></script>
+<script src="/web/vendor/d3-delaunay/d3-delaunay.min.js"></script>
+<script src="/maps/atlas-art.js"></script>
+<script src="/maps/atlas-floor-art.js?v=d324295d5414"></script>
+<script>
+const COPPER = '#b0612c', INK = '#3b2a1a';
+const map = L.map('map', { crs: L.CRS.Simple, zoomSnap: 0.25, attributionControl: false });
+map.createPane('art').style.zIndex = 350;      // 画的底图在圆点、路线下面
+map.createPane('rivers').style.zIndex = 360;
+map.createPane('roads').style.zIndex = 370;
+let data = null, floors = { plans: {} }, tab = null, markers = {}, layer = L.layerGroup().addTo(map), labels = [];
+let regionBase = null, regionBaseKey = null, regionPins = [], regionFocus = null;
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// 从这里过去：只有登记或城图量出的分钟才报用时；纯里程按旅行规则另算。
+function fmtTrip(fh, pace, timeSources = []) {
+  if (!fh) return '';
+  const [min, mi] = fh;
+  if (timeSources.includes('distance')) return `约 ${mi} 英里（按旅行规则计算）`;
+  if (pace === 'caravan' && mi > 15) return `约 ${Math.max(1, Math.round(mi / 20 * 2) / 2)} 天（商队，约 ${Math.round(mi)} 英里）`;
+  if (min < 90) return `约 ${Math.round(min / 5) * 5 || 1} 分钟`;
+  const h = min / 60;
+  return `约 ${h < 10 ? Math.round(h * 2) / 2 : Math.round(h)} 小时`;
+}
+
+function label(m, text, cls, minZoom, prio = 10, dir = 'right') {
+  m.bindTooltip(esc(text), { permanent: true, direction: dir, offset: dir === 'right' ? [6, 0] : [0, 0], className: 'lbl ' + cls });
+  labels.push({ m, minZoom, prio });
+}
+// 标签：到了缩放级别才显示；互相压着的，优先级低的藏起来（点开地点照样看得到名字）
+function refreshLabels() {
+  const z = map.getZoom(), placed = [];
+  for (const { m, minZoom } of [...labels].sort((a, b) => b.prio - a.prio)) {
+    if (!layer.hasLayer(m) || z < minZoom) { if (m.isTooltipOpen()) m.closeTooltip(); continue; }
+    if (!m.isTooltipOpen()) m.openTooltip();
+    const el = m.getTooltip().getElement();
+    if (!el) continue;
+    el.style.visibility = '';
+    const r = el.getBoundingClientRect();
+    if (placed.some(p => r.left < p.right && r.right > p.left && r.top < p.bottom && r.bottom > p.top)) el.style.visibility = 'hidden';
+    else placed.push(r);
+  }
+}
+map.on('zoomend moveend resize', () => requestAnimationFrame(() => { refreshRegionPins(); refreshLabels(); }));
+
+// 比例尺（CRS.Simple 没有地理距离，自己画）：本地图单位英里，区域图单位像素
+const Scale = L.Control.extend({
+  options: { position: 'bottomleft' },
+  onAdd() { this.el = L.DomUtil.create('div', 'scalebar'); return this.el; },
+  update(unitsPerMile) {
+    if (unitsPerMile === 'ft') {   // 平面图：单位尺
+      const pxPerFt = map.getZoomScale(map.getZoom(), 0);
+      const ft = [5, 10, 20, 50, 100].find(n => n * pxPerFt >= 60) || 100;
+      this.el.innerHTML = `<i style="width:${Math.round(ft * pxPerFt)}px"></i>${ft} 尺`;
+      return;
+    }
+    const pxPerMile = map.getZoomScale(map.getZoom(), 0) * unitsPerMile;
+    const nice = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+    const mi = nice.find(n => n * pxPerMile >= 70) || 500;
+    this.el.innerHTML = `<i style="width:${Math.round(mi * pxPerMile)}px"></i>${mi < 1 ? Math.round(mi * 1760) + ' 码（' + mi + ' 英里）' : mi + ' 英里'}`;
+  },
+});
+const scale = new Scale().addTo(map);
+let unitsPerMile = 1;
+map.on('zoomend', () => scale.update(unitsPerMile));
+
+// 从塔莉娅所在处到点开的地方：按记过的路程最短的走法连起来
+function drawRoute(d, byId, target, group) {
+  group.clearLayers();
+  const src = d.here;
+  if (!src || src === target) return;
+  const adj = {};
+  for (const e of d.edges) {
+    if ((e.mode ?? 'ground') !== 'ground') continue;
+    (adj[e.a] ||= []).push([e.b, e.min]);
+    (adj[e.b] ||= []).push([e.a, e.min]);
+  }
+  const dist = { [src]: 0 }, prev = {}, todo = new Set(Object.keys(adj));
+  while (todo.size) {
+    let u = null;
+    for (const k of todo) if (dist[k] != null && (u == null || dist[k] < dist[u])) u = k;
+    if (u == null || u === target) break;
+    todo.delete(u);
+    for (const [v, w] of adj[u]) if (dist[v] == null || dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = u; }
+  }
+  if (dist[target] == null) return;
+  const pts = [];
+  for (let k = target; k; k = prev[k]) pts.unshift([byId[k].x, byId[k].y]);
+  L.polyline(AtlasArt.samplePath(pts).map(([x, y]) => [y, x]), { color: COPPER, weight: 4, opacity: 0.85, dashArray: '10 6', interactive: false }).addTo(group);
+}
+
+function midpoint(pts) {
+  let best = pts[0], len = 0;
+  const segs = pts.slice(1).map((p, i) => { const l = Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]); len += l; return l; });
+  let acc = 0;
+  for (let i = 0; i < segs.length; i++) {
+    if (acc + segs[i] >= len / 2) {
+      const t = (len / 2 - acc) / (segs[i] || 1);
+      best = [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t];
+      break;
+    }
+    acc += segs[i];
+  }
+  return best;
+}
+
+function drawLocal(lid, keepView) {
+  const d = data.layers[lid], byId = Object.fromEntries(d.nodes.map(n => [n.id, n]));
+  const detail = d.detail_zoom ?? (d.pace === 'caravan' ? 4 : 7);
+  unitsPerMile = 1;
+  // 底图：atlas-art.js 画的 SVG（地貌、城墙、街道、街区）；这里只补街名、片区名和鼠标悬停
+  const art = AtlasArt.draw(d, { scale: d.pace === 'caravan' ? 10 : 1000 });
+  L.svgOverlay(art.svg, art.bounds, { pane: 'art', interactive: false }).addTo(layer);
+  for (const a of d.areas) {
+    const c = L.latLngBounds(a.pts.map(([x, y]) => [y, x])).getCenter();
+    label(L.marker(c, { opacity: 0, interactive: false }).addTo(layer), a.name, 'area', -99, 2, 'center');
+  }
+  for (const s of d.streets.filter(s => s.name)) {
+    const pts = AtlasArt.samplePath(s.pts).map(([x, y]) => [y, x]);
+    L.polyline(pts, { opacity: 0, weight: 14 }).bindTooltip(esc(s.name), { sticky: true }).addTo(layer);
+    const m = L.marker(midpoint(pts), { opacity: 0, interactive: false }).addTo(layer);
+    label(m, s.name, ['river', 'wash'].includes(s.style) ? 'river' : ['street', 'lane', 'quay'].includes(s.style) ? 'street' : 'far',
+      ['street', 'lane', 'quay'].includes(s.style) ? detail + 0.5 : -99, ['street', 'lane', 'quay'].includes(s.style) ? 3 : 4, 'center');
+  }
+  const route = L.layerGroup().addTo(layer);
+  for (const n of d.nodes) {
+    if (n.kind === 'junction' || n.kind === 'slot' || !n.name) continue;
+    const here = n.id === d.here;
+    const m = L.circleMarker([n.y, n.x], {
+      radius: here ? 8 : n.kind === 'gate' ? 6 : n.tier === 1 ? 6 : 4.5,
+      color: here ? COPPER : INK, weight: here ? 3 : 1.5, dashArray: n.approx ? '2 2' : null,
+      fillColor: here ? COPPER : n.kind === 'gate' ? '#efe3c6' : n.tier === 1 ? '#c9a46a' : '#f4ead2', fillOpacity: 1,
+    }).addTo(layer);
+    const rows = [`<b>${esc(n.name)}</b>${n.approx ? ' <small>（位置估的）</small>' : ''}`];
+    if (n.note) rows.push(esc(n.note));
+    if (n.inside.length) rows.push(`<small>里头知道的：${n.inside.map(esc).join('、')}</small>`);
+    if (n.link && data.layers[n.link]) rows.push(`<a href="#${n.link}">打开「${esc(data.layers[n.link].title)}」→</a>`);
+    if (here) rows.push('<b style="color:' + COPPER + '">' + esc(data.hero_name || '主角') + '在这里</b>');
+    else if (n.from_here) rows.push(`从这里过去${fmtTrip(n.from_here, d.pace, n.from_here_time_sources)}`);
+    if (n.since) rows.push(`<small>第 ${n.since} 天起知道</small>`);
+    m.bindPopup(rows.join('<br>'));
+    m.on('popupopen', () => drawRoute(d, byId, n.id, route));
+    m.on('popupclose', () => route.clearLayers());
+    markers[n.id] = m;
+    label(m, here ? '★ ' + n.name : n.name, here ? 'here' : n.tier === 1 ? 't1' : '', here || n.tier === 1 ? -99 : detail,
+      here ? 100 : n.kind === 'gate' ? 50 : n.tier === 1 ? 40 : 10);
+  }
+  map.setMinZoom(d.pace === 'caravan' ? -1 : 2); map.setMaxZoom(d.pace === 'caravan' ? 7 : 11);
+  if (!keepView) {
+    const named = d.nodes.filter(n => n.name && n.kind !== 'slot' && n.kind !== 'junction');
+    const focus = lid === 'delzimmer' ? named.filter(n => n.tier === 2 || n.kind === 'gate') : named;
+    map.fitBounds(L.latLngBounds(focus.map(n => [n.y, n.x])).pad(0.12));
+  }
+  const hero = esc(data.hero_name || '主角');
+  document.getElementById('legend').innerHTML = (d.here ? `★ 是${hero}现在的位置。点开一个地方，看从这里过去要多久、怎么走（铜色虚线）。` : '点开一个地方看简介。') +
+    '虚线圈＝位置估的。放大看细处。' + (d.generated ? '这座城的街巷是生成器按几条已定的事实画的，从此固定，城里多远照图量。' : '位置是按说过的路程推算的，不是测绘图。') +
+    (lid === 'uthangol' ? '井站之间的里程按商队天数估。' : '');
+}
+
+function drawRegionRivers(r, bounds) {
+  if (!r.rivers?.length) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${r.size[0]} ${r.size[1]}`);
+  for (const river of r.rivers) {
+    const path = document.createElementNS(ns, 'path');
+    const pts = AtlasArt.samplePath(river.points);
+    path.setAttribute('d', pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join(' '));
+    path.setAttribute('data-river-id', river.id);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', river.kind === 'seasonal' ? '#87adc1' : '#88bfdc');
+    path.setAttribute('stroke-width', river.kind === 'seasonal' ? '1.8' : '2.6');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    if (river.kind === 'seasonal') path.setAttribute('stroke-dasharray', '4 4');
+    svg.appendChild(path);
+    if (river.label_at) {
+      const [x, y] = river.label_at;
+      const m = L.marker([-y, x], {
+        icon: L.divIcon({ className: '', iconSize: [0, 0] }), interactive: false,
+      }).addTo(layer);
+      label(m, river.name, 'river', -0.5, 3, 'center');
+    }
+  }
+  // 与原JPEG共用像素坐标；SVG随地图缩放，原图不重编码，河道保持清晰。
+  L.svgOverlay(svg, bounds, { pane: 'rivers', interactive: false }).addTo(layer);
+}
+
+function drawRegionRoads(r, bounds) {
+  const routes = (r.routes || []).filter(route => route.points?.length >= 2);
+  if (!routes.length) return;
+  const colors = { shared: '#625342', pass: '#9e3c29', mine: '#a86813', water: '#376d84' };
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${r.size[0]} ${r.size[1]}`);
+  for (const route of routes) {
+    const path = document.createElementNS(ns, 'path');
+    const pts = route.geometry === 'polyline' ? route.points : AtlasArt.samplePath(route.points);
+    path.setAttribute('d', pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join(' '));
+    path.setAttribute('data-route-id', route.id);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', colors[route.group] || colors.shared);
+    path.setAttribute('stroke-width', '2.5');
+    path.setAttribute('vector-effect', 'non-scaling-stroke');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    if (route.kind === 'water') path.setAttribute('stroke-dasharray', '3 5');
+    else if (route.kind === 'pack') path.setAttribute('stroke-dasharray', '6 4');
+    svg.appendChild(path);
+    if (route.label_at) {
+      const [x, y] = route.label_at;
+      const m = L.marker([-y, x], {
+        icon: L.divIcon({ className: '', iconSize: [0, 0] }), interactive: false,
+      }).addTo(layer);
+      label(m, `${route.distance_miles} 英里`, 'route', 2, 5, 'center');
+    }
+  }
+  L.svgOverlay(svg, bounds, { pane: 'roads', interactive: false }).addTo(layer);
+  for (const point of r.route_waypoints || []) {
+    const m = L.circleMarker([-point.at[1], point.at[0]], {
+      radius: 3, color: INK, weight: 1.5, fillColor: '#f7efdc', fillOpacity: 1,
+    });
+    regionPins.push({ id: point.id, m, minZoom: 1.5, here: false });
+    m.bindPopup(`<b>${esc(point.name)}</b><br>${esc(point.note || '')}`);
+    markers[point.id] = m;
+    label(m, point.name, 'waypoint', 2, 8, point.label_direction || 'right');
+  }
+}
+
+// 细节点只在近看时显示；当前位置和深链接目标始终可见。
+function refreshRegionPins() {
+  if (tab !== 'region') return;
+  const zoom = map.getZoom();
+  for (const { id, m, minZoom, here } of regionPins) {
+    const visible = here || id === regionFocus || zoom >= minZoom;
+    if (visible && !layer.hasLayer(m)) layer.addLayer(m);
+    else if (!visible && layer.hasLayer(m)) layer.removeLayer(m);
+  }
+}
+
+function mapLink(layerId, target) {
+  const title = layerId?.startsWith('floor-') ? floors.plans?.[layerId.slice(6)]?.title : data.layers[layerId]?.title;
+  if (!title) return '';
+  const hash = encodeURIComponent(layerId) + (target ? ':' + encodeURIComponent(target) : '');
+  return `<a href="#${hash}">打开「${esc(title)}」→</a>`;
+}
+
+function drawRegion(keepView) {
+  const r = data.region, [w, h] = r.size;
+  unitsPerMile = r.px_per_mile;
+  const bounds = [[-h, 0], [0, w]];
+  drawRegionRivers(r, bounds);
+  drawRegionRoads(r, bounds);
+
+  const byId = Object.fromEntries(r.pins.map(p => [p.id, p]));
+  for (const p of r.pins) {
+    const here = p.id === r.here;
+    const m = L.circleMarker([-p.at[1], p.at[0]], {
+      radius: here ? 9 : p.tier === 2 ? 4.5 : 6, color: here ? COPPER : INK, weight: here ? 3 : 2, dashArray: p.approx ? '3 3' : null,
+      fillColor: here ? COPPER : '#efe3c6', fillOpacity: 0.95,
+    });
+    regionPins.push({ id: p.id, m, minZoom: p.min_zoom ?? -4, here });
+    const rows = [`<b>${esc(p.name)}</b>${p.approx ? ' <small>（位置约略）</small>' : ''}`];
+    if (p.note) rows.push(esc(p.note));
+    if (p.inside.length) rows.push(`<small>城里知道的：${p.inside.map(esc).join('、')}</small>`);
+    if (here) rows.push('<b style="color:' + COPPER + '">' + esc(data.hero_name || '主角') + '在这一带</b>');
+    const link = mapLink(p.layer, p.target);
+    if (link) rows.push(link);
+    for (const detail of p.details || []) {
+      const detailLink = mapLink(detail.layer, detail.target);
+      rows.push(`<small><b>${esc(detail.name)}</b>${detail.note ? '：' + esc(detail.note) : ''}${detailLink ? '<br>' + detailLink : ''}</small>`);
+    }
+    m.bindPopup(rows.join('<br>'));
+    markers[p.id] = m;
+    label(m, here ? '★ ' + p.name : p.name, here ? 'here' : p.tier === 2 ? '' : 't1', -99,
+      here ? 100 : p.id === regionFocus ? 90 : p.tier === 2 ? 10 : 20);
+  }
+  map.setMaxBounds(L.latLngBounds(bounds).pad(0.1));
+  map.setMinZoom(-4); map.setMaxZoom(r.routes?.some(route => route.points) ? 4 : 2);
+  if (!keepView) {
+    const hp = byId[r.here || r.focus];
+    hp ? map.setView([-hp.at[1], hp.at[0]], 0) : map.fitBounds(bounds);
+  }
+  refreshRegionPins();
+  // 数据刷新只重画标记；保留已加载的底图，也不打断慢网络中的请求。
+  const baseKey = JSON.stringify([r.image, r.size, r.tiles]);
+  if (baseKey !== regionBaseKey) {
+    if (regionBase) map.removeLayer(regionBase);
+    regionBase = L.layerGroup();
+    L.imageOverlay(r.image, bounds, { pane: 'art', zIndex: 0 }).addTo(regionBase);
+    if (r.tiles) L.tileLayer(r.tiles.url, {
+      pane: 'art', zIndex: 1, tileSize: r.tiles.size,
+      minZoom: -4, maxZoom: 2, minNativeZoom: r.tiles.min_zoom, maxNativeZoom: r.tiles.max_zoom,
+      bounds, noWrap: true, keepBuffer: 1, updateWhenIdle: true, detectRetina: false,
+    }).addTo(regionBase);
+    regionBaseKey = baseKey;
+  }
+  // 在区域视角确定后挂载，避免沿用城图缩放请求无关切片。
+  if (!map.hasLayer(regionBase)) regionBase.addTo(map);
+  document.getElementById('legend').innerHTML =
+    `${esc(r.source)} 虚线圈为近似定位，含本团地点和后世社区标记。点开图钉看相关地点和路程说明；放大看较小地点。` +
+    (r.rivers?.length ? '蓝色补绘河道按本团已核定水系示意；蓝色虚线为季节性干河床，弯曲位置约略。' : '') +
+    (r.routes?.some(route => route.points) ? ' <a href="#region:uthangol-roads">查看乌坦戈尔路网</a>：棕红为主路，土黄为矿路，灰棕为共用道路；陆路实线可通轻车，陆路虚线仅能步行或驮行；蓝色点线为小船航段。放大显示沿路里程，线形为示意。' : '');
+}
+
+// 楼层平面图：maps/floorplans.json（手写），单位尺，y 从临街墙往北；各层按 dx 左右并排
+const FLOOR_STYLE = {
+  hall: { fillColor: '#f4ead2' }, room: { fillColor: '#f7efdc' }, pass: { fillColor: '#e9dcbc' },
+  stair: { fillColor: '#d9c69c', dashArray: '2 3' }, fixture: { fillColor: '#c9a46a', weight: 1 },
+  cave: { fillColor: '#cdbf9f', dashArray: '6 4' }, yard: { fillColor: '#e2d1a8', dashArray: '4 4', weight: 1 },
+  loft: { fillColor: '#ece0c2', dashArray: '6 4' }, table: { fillColor: '#d8bf8a', weight: 1 },
+  street: { fillColor: '#d9c9a2', weight: 0 },
+  water: { fillColor: '#39494f', color: '#26353b', fillOpacity: 0.9, dashArray: '5 4' },
+};
+function drawFloor(pid, keepView) {
+  const plan = floors.plans[pid], all = [];
+  const textured = plan.art === 'fortress' && window.AtlasFloorArt && document.getElementById('floor-textures').checked !== false;
+  document.getElementById('map').classList?.toggle('textured-floor', Boolean(textured));
+  document.getElementById('map').classList?.toggle('arid-floor', plan.palette === 'arid-sandstone');
+  if (textured) {
+    const art = window.AtlasFloorArt.draw(plan);
+    L.svgOverlay(art.svg, art.bounds, { pane: 'art', interactive: false }).addTo(layer);
+  }
+  unitsPerMile = 'ft';
+  // 透明定位点：默认图标的 tooltipAnchor 会把字往上挪，这里用零尺寸 divIcon
+  const pin = c => L.marker(c, { icon: L.divIcon({ className: '', iconSize: [0, 0] }), interactive: false }).addTo(layer);
+  for (const f of plan.floors) {
+    const pt = ([x, y]) => [y, x + f.dx];
+    // Terrain shares the same feet coordinates, but never becomes a walkable room.
+    for (const terrain of f.terrain || []) {
+      const terrainPoints = terrain.points || terrain.poly || (terrain.rect && [
+        [terrain.rect[0], terrain.rect[1]], [terrain.rect[2], terrain.rect[1]],
+        [terrain.rect[2], terrain.rect[3]], [terrain.rect[0], terrain.rect[3]],
+      ]);
+      if (!terrainPoints?.length) continue;
+      const pts = terrainPoints.map(pt), halfWidth = (terrain.width_ft || 0) / 2;
+      for (const [y, x] of pts) all.push([y - halfWidth, x - halfWidth], [y + halfWidth, x + halfWidth]);
+      if (!textured) {
+        const colors = { rock: '#b47c60', ridge: '#d5a084', slope: '#a26e55', scrub: '#9b9770' };
+        if (terrain.points) L.polyline(pts, {
+          color: terrain.kind === 'path' ? '#e2bd96' : '#865b48',
+          weight: terrain.kind === 'path' ? 3 : 1, opacity: .7, interactive: false,
+        }).addTo(layer);
+        else L.polygon(pts, { color: '#986c53', weight: .5,
+          fillColor: colors[terrain.kind] || '#c48e71', fillOpacity: .7, interactive: false,
+        }).addTo(layer);
+      }
+    }
+    const xs = f.rooms.flatMap(r => r.rect ? [r.rect[0], r.rect[2]] : r.poly.map(p => p[0]));
+    label(pin(pt(f.title_at || [(Math.min(...xs) + Math.max(...xs)) / 2, -18])), f.name, 't1', f.title_min_zoom ?? -99, 60, 'center');
+    for (const r of f.rooms) {
+      const pts = (r.rect ? [[r.rect[0], r.rect[1]], [r.rect[2], r.rect[1]], [r.rect[2], r.rect[3]], [r.rect[0], r.rect[3]]] : r.poly).map(pt);
+      all.push(...pts);
+      const st = FLOOR_STYLE[r.kind] || FLOOR_STYLE.room;
+      const conditionStyle = r.condition === 'ruin' ? { fillColor: plan.palette === 'arid-sandstone' ? '#c59a7f' : '#bbb7a9', color: plan.palette === 'arid-sandstone' ? '#895d47' : '#686b60', dashArray: '3 2' } : r.use === 'current' ? { color: COPPER } : {};
+      const g = L.polygon(pts, textured ? { stroke: false, fillOpacity: 0 } : { color: INK, weight: 2, fillOpacity: 1, ...st, ...conditionStyle }).addTo(layer);
+      g.bindPopup(`<b>${esc(f.name)}·${esc(r.name)}</b>` + (r.note ? '<br>' + esc(r.note) : ''));
+      const c = g.getBounds().getCenter();
+      if (r.kind === 'table' || r.label === false) continue;
+      label(pin(c), r.name,
+        r.kind === 'water' ? 'water' : r.kind === 'fixture' ? 'far' : ['yard', 'cave', 'street'].includes(r.kind) ? 'area' : '', r.min_zoom ?? -99,
+        r.label_priority ?? (r.kind === 'fixture' ? 15 : ['yard', 'street'].includes(r.kind) ? 1 : 20), 'center');
+    }
+    if (!textured) for (const d of f.doors || []) L.polyline(d.map(pt), { color: '#efe3c6', weight: 5, interactive: false }).addTo(layer);
+    for (const t of f.labels || []) label(pin(pt(t.at)), t.text, 'street', t.min_zoom ?? -99, 3, 'center');
+  }
+  map.setMinZoom(plan.min_zoom ?? -1); map.setMaxZoom(5);
+  const context = document.getElementById('floor-context');
+  if (context) context.textContent = plan.context || '去顶俯视 · 同比例分层';
+  if (!keepView) map.fitBounds(L.latLngBounds(all).pad(plan.art === 'fortress' ? 0.04 : 0.08));
+  document.getElementById('legend').textContent = plan.note + (textured ? ' 点开建筑看尺寸；门槛符号表示入口，开闭沿现场。' : ' 点开一间屋看说明；浅色缺口是门。');
+}
+
+const FORT_SHEETS = {
+  plan: ['全堡修订平面', '/maps/studies/fort-revision-2026-11-13.svg'],
+  current: ['全堡现状', '/maps/studies/fort-site-damage-2026-11-13.svg'],
+  residence: ['内堡家庭、客房与服务', '/maps/studies/fort-keep-refit-2026-11-13.svg'],
+  damage: ['内堡当前残损', '/maps/studies/fort-keep-damage-2026-11-13.svg'],
+};
+function drawFortStudy(sheet = 'plan') {
+  if (!Object.hasOwn(FORT_SHEETS, sheet)) {
+    sheet = 'plan';
+    history.replaceState(null, '', '#floor-bandit-keep');
+  }
+  const [title, src] = FORT_SHEETS[sheet];
+  document.getElementById('fort-sheets').innerHTML = Object.entries(FORT_SHEETS).map(([id, [name]]) =>
+    `<button type="button" data-sheet="${id}" class="${id === sheet ? 'on' : ''}" aria-pressed="${id === sheet}">${name}</button>`).join('');
+  document.querySelectorAll('#fort-sheets button').forEach(b => b.addEventListener('click', () => {
+    drawFortStudy(b.dataset.sheet);
+    history.replaceState(null, '', '#floor-bandit-keep:' + b.dataset.sheet);
+  }));
+  const img = document.getElementById('fort-sheet');
+  img.src = src + '?v=20261113-fort-site'; img.alt = '强盗堡·' + title;
+  document.getElementById('fort-original').href = img.src;
+  document.getElementById('legend').textContent = {
+    plan: '完整期的中院、北院和南端内堡。建筑编号对应全堡现状图。',
+    current: '按完整期建筑编号标出今天的可用设施、残损和坍塌。内堡室内见逐房残损图。',
+    residence: '完整期的内堡家庭、客房和家务空间。',
+    damage: '按原房号标出现存构件损坏，颜色区分轻损、中损、重损和局部坍塌。',
+  }[sheet];
+}
+function tabs() {
+  return [['region', data.region.title], ...Object.entries(data.layers).map(([id, l]) => [id, l.title]),
+    ...Object.entries(floors.plans || {}).map(([id, p]) => ['floor-' + id, p.title])];
+}
+function show(name, keepView) {
+  if (!tabs().some(([id]) => id === name)) name = 'region';
+  if (!keepView) map.setMaxBounds(null);
+  tab = name;
+  const floorId = name.startsWith('floor-') ? name.slice(6) : null;
+  document.getElementById('floor-options').hidden = !floorId || floors.plans[floorId]?.art !== 'fortress';
+  const study = floorId === 'bandit-keep';
+  document.getElementById('fort-study').hidden = !study;
+  document.getElementById('map').hidden = study;
+  if (study) document.getElementById('floor-options').hidden = true;
+  if (!floorId) document.getElementById('map').classList?.remove('textured-floor', 'arid-floor');
+  if (name !== 'region' && regionBase) map.removeLayer(regionBase);
+  layer.clearLayers(); labels = []; markers = {}; regionPins = [];
+  if (name !== 'region') regionFocus = null;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  if (study) {
+    drawFortStudy(location.hash.slice(1).split(':')[1]);
+    if (location.hash.slice(1).split(':')[0] !== name) history.replaceState(null, '', '#' + name);
+    return;
+  }
+  map.invalidateSize();
+  name === 'region' ? drawRegion(keepView) : name.startsWith('floor-') ? drawFloor(name.slice(6), keepView) : drawLocal(name, keepView);
+  refreshLabels(); scale.update(unitsPerMile);
+  if (location.hash.slice(1).split(':')[0] !== name) history.replaceState(null, '', '#' + name);
+}
+function buildTabs() {
+  const el = document.getElementById('tabs');
+  el.innerHTML = tabs().map(([id, t]) => `<button data-tab="${id}" role="tab">${esc(t)}</button>`).join('');
+  el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => show(b.dataset.tab)));
+}
+// 旧陶恩北路直链保留九段原路；全山概览收纳后续登记的道路。
+function regionRoadOverview(focus) {
+  if (focus === 'uthangol-roads') return data.region.routes || [];
+  if (focus !== 'tawnwell-roads') return null;
+  const ids = new Set([
+    'tawnwell-mountain-fork', 'mountain-fork-old-road-midway', 'old-road-midway-bandit-keep',
+    'bandit-keep-uthangol-pass', 'uthangol-pass-northslope-yard', 'mountain-fork-northfork-gravel',
+    'northfork-gravel-narrows', 'northfork-narrows-gully', 'deepcopper-gully-mouth',
+  ]);
+  return (data.region.routes || []).filter(route => ids.has(route.id));
+}
+// #图层 或 #图层:地点ID（直接点开那个地方）
+function fromHash() {
+  let [t, focus] = location.hash.slice(1).split(':');
+  // Accept shared plan IDs as well as canonical floor-* links.
+  if (Object.hasOwn(floors.plans || {}, t)) t = 'floor-' + t;
+  if (t === 'uthangol') {
+    const pin = data.region.pins.find(p => p.id === focus) ||
+      data.region.pins.find(p => (p.details || []).some(d => d.id === focus)) ||
+      data.region.pins.find(p => p.id === 'tawnwell');
+    t = 'region'; focus = pin?.id;
+    history.replaceState(null, '', '#region' + (focus ? ':' + focus : ''));
+  }
+  regionFocus = t === 'region' && [...data.region.pins, ...(data.region.route_waypoints || [])].some(p => p.id === focus) ? focus : null;
+  if (t !== tab) show(t);
+  else if (t === 'region') { refreshRegionPins(); refreshLabels(); }
+  else if (t === 'floor-bandit-keep') drawFortStudy(focus);
+  const overview = t === 'region' ? regionRoadOverview(focus) : null;
+  if (overview) {
+    const points = overview.flatMap(route =>
+      [...(route.points || []), ...(route.label_at ? [route.label_at] : [])]).map(([x, y]) => [-y, x]);
+    if (points.length) map.fitBounds(L.latLngBounds(points).pad(0.2), { maxZoom: 3.5 });
+    return;
+  }
+  if (focus && markers[focus]) {
+    const m = markers[focus], here = data.layers[tab] && markers[data.layers[tab].here];
+    here && here !== m ? map.fitBounds(L.latLngBounds([here.getLatLng(), m.getLatLng()]).pad(0.25))
+                       : map.setView(m.getLatLng(), Math.max(map.getZoom(), data.region.route_waypoints?.some(p => p.id === focus) ? 3 : 0));
+    m.openPopup();
+  }
+}
+window.addEventListener('hashchange', fromHash);
+document.getElementById('floor-textures').addEventListener('change', () => { if (tab?.startsWith('floor-')) show(tab, true); });
+
+async function load(first) {
+  try {
+    const res = await fetch('/maps/atlas.json', { cache: 'no-store' });
+    const next = await res.json();
+    const previousFloors = JSON.stringify(floors);
+    try { floors = await (await fetch('/maps/floorplans.json', { cache: 'no-store' })).json(); } catch (e) { console.error(e); }
+    const changed = JSON.stringify(next) !== JSON.stringify(data) || previousFloors !== JSON.stringify(floors);
+    data = next;
+    document.getElementById('meta').textContent = data.when;
+    if (first) { buildTabs(); fromHash(); }
+    else if (changed) {
+      buildTabs();
+      tabs().some(([id]) => id === tab) ? show(tab, true) : fromHash();
+    }
+  } catch (e) {
+    if (first) document.getElementById('legend').textContent = (e instanceof SyntaxError && /JSON/.test(e.message) ? '读不到 maps/atlas.json：先跑 tools/mapgen.py。' : '地图画出错：' + e.message);
+    console.error(e);
+  }
+}
+load(true);
+setInterval(() => load(false), 30000);
+</script>

@@ -1,0 +1,9 @@
+/* 全站共用：顶部导航 + 跨页淡入淡出 */
+@view-transition { navigation: auto; }
+body { margin: 0; }
+.cc-nav { position: sticky; top: 0; z-index: 1000; display: flex; gap: 4px; padding: 6px 10px;
+  background: #1d1712; border-bottom: 1px solid #7a5a3a; font: 15px Georgia, "Noto Serif SC", serif;
+  view-transition-name: cc-nav; }
+.cc-nav a { padding: 6px 14px; border-radius: 6px; color: #f0c38e; text-decoration: none; }
+.cc-nav a:hover { background: #2b221a; }
+.cc-nav a.on { background: #7a5a3a; color: #fff3e2; }

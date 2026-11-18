@@ -1,0 +1,114 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+propertyNames: {$ref: '#/$defs/epic_id'}
+additionalProperties: {$ref: '#/$defs/epic'}
+$defs:
+  text: {type: string, pattern: '\S'}
+  key: {type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'}
+  epic_id: {type: string, pattern: '^epic-[a-z0-9]+(?:-[a-z0-9]+)*$'}
+  condition:
+    type: object
+    oneOf:
+      - required: [fact]
+        additionalProperties: false
+        properties: {fact: {$ref: '#/$defs/text'}}
+      - required: [item]
+        additionalProperties: false
+        properties: {item: {type: string, pattern: '^item-.+$'}}
+      - required: [quest, outcome]
+        additionalProperties: false
+        properties: {quest: {type: string, pattern: '^Q-[0-9]+$'}, outcome: {$ref: '#/$defs/text'}}
+      - required: [act, slot, outcome]
+        additionalProperties: false
+        properties:
+          act: {$ref: '#/$defs/key'}
+          slot: {$ref: '#/$defs/key'}
+          outcome: {$ref: '#/$defs/key'}
+      - required: [schedule, step, outcome]
+        additionalProperties: false
+        properties:
+          schedule: {$ref: '#/$defs/text'}
+          step: {$ref: '#/$defs/text'}
+          outcome: {enum: [succeeded, failed, partial, pending]}
+  alternatives:
+    type: array
+    minItems: 1
+    items:
+      type: array
+      minItems: 1
+      uniqueItems: true
+      items: {$ref: '#/$defs/condition'}
+  slot:
+    type: object
+    additionalProperties: false
+    required: [goal, result, source]
+    properties:
+      goal: {$ref: '#/$defs/text'}
+      result:
+        type: object
+        additionalProperties: false
+        required: [id, text]
+        properties:
+          id: {$ref: '#/$defs/key'}
+          text: {$ref: '#/$defs/text'}
+      source: {$ref: '#/$defs/text'}
+      when: {$ref: '#/$defs/alternatives'}
+  act:
+    type: object
+    additionalProperties: false
+    required: [goal, slots]
+    properties:
+      goal: {$ref: '#/$defs/text'}
+      slots:
+        type: object
+        minProperties: 1
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/slot'}
+  opponent:
+    type: object
+    additionalProperties: false
+    properties:
+      step: {type: object, required: [at]}
+      as_of: {type: string, pattern: '^E[0-9]+$'}
+      after: {$ref: '#/$defs/key'}
+      continue: {type: boolean}
+      stop:
+        type: object
+        additionalProperties: false
+        required: [reason, when]
+        properties:
+          reason: {$ref: '#/$defs/text'}
+          when: {$ref: '#/$defs/alternatives'}
+      witnesses:
+        type: array
+        uniqueItems: true
+        items: {type: string, pattern: '^npc-.+$'}
+      on_conflict: {$ref: '#/$defs/text'}
+    oneOf:
+      - required: [step]
+        not: {required: [stop]}
+      - required: [stop, after]
+        not: {anyOf: [{required: [step]}, {required: [continue]}, {required: [witnesses]}, {required: [on_conflict]}]}
+  epic:
+    type: object
+    additionalProperties: false
+    required: [id, title, goal, resources, acts, end]
+    properties:
+      id: {$ref: '#/$defs/epic_id'}
+      title: {$ref: '#/$defs/text'}
+      goal: {$ref: '#/$defs/text'}
+      resources:
+        type: object
+        minProperties: 1
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/text'}
+      acts:
+        type: object
+        minProperties: 1
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/act'}
+      end: {$ref: '#/$defs/alternatives'}
+      opponent:
+        type: object
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/opponent'}

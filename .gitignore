@@ -1,0 +1,11 @@
+.cache/
+.session/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+.campaign.lock

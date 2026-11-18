@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>战役小说</title>
+<link rel="stylesheet" href="/web/site.css">
+<style>
+  body { font-family: Georgia, "Noto Serif SC", serif; background: #1d1712; color: #eadbc4; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px 20px 64px; line-height: 1.9; font-size: 17px; }
+  a { color: #f0c38e; }
+  h1 { color: #f0c38e; font-size: 1.7em; margin: .6em 0 .8em; }
+  h2 { color: #f0c38e; font-size: 1.25em; margin: 2em 0 .6em; border-bottom: 1px solid #4a3a2a; padding-bottom: 4px; }
+  h3 { color: #e0b07e; font-size: 1.05em; margin: 1.6em 0 .4em; }
+  p { margin: .7em 0; }
+  strong { color: #fff3e2; }
+  blockquote { margin: 1em 0; padding: .2em 1em; border-left: 3px solid #7a5a3a; color: #c9b79c; background: #241c16; }
+  hr { border: 0; border-top: 1px solid #4a3a2a; margin: 2em 0; }
+  code { font-size: .9em; color: #a8957c; }
+  ul { padding-left: 1.4em; }
+  #toc a { display: block; padding: 10px 0; border-bottom: 1px solid #3a2e22; text-decoration: none; font-size: 1.1em; }
+  #toc small { color: #a8957c; margin-left: .6em; }
+  .back { display: inline-block; margin-top: 8px; font-size: .9em; text-decoration: none; }
+  .pager { display: flex; justify-content: space-between; margin-top: 3em; font-size: .95em; }
+</style>
+</head>
+<body>
+<nav class="cc-nav"><a href="/">图库</a><a href="/web/novel.html" class="on">小说</a><a href="/maps/atlas.html">战役地图</a><a href="/maps/battle.html">战场地图</a></nav>
+<main id="root">加载中…</main>
+<script>
+// 章节是 web/novel/ 下的 Markdown 文件，按文件名排序（NN_标题.md）；标题取文件第一行 "# "
+const root = document.getElementById("root");
+const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const inline = s => esc(s)
+  .replace(/`([^`]+)`/g, "<code>$1</code>")
+  .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+  .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+// 只支持章节里用到的写法：# 标题、段落、> 引用、- 列表、---
+function md(text) {
+  const out = [];
+  const lines = text.replace(/\r/g, "").split("\n");
+  for (let i = 0; i < lines.length;) {
+    const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    let m;
+    if ((m = l.match(/^(#{1,3}) (.*)/))) { out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); i++; }
+    else if (/^-{3,}\s*$/.test(l)) { out.push("<hr>"); i++; }
+    else if (l.startsWith(">")) {
+      const q = [];
+      while (i < lines.length && lines[i].startsWith(">")) q.push(lines[i++].replace(/^> ?/, ""));
+      out.push("<blockquote>" + md(q.join("\n")) + "</blockquote>");
+    } else if (l.startsWith("- ")) {
+      const li = [];
+      while (i < lines.length && lines[i].startsWith("- ")) li.push("<li>" + inline(lines[i++].slice(2)) + "</li>");
+      out.push("<ul>" + li.join("") + "</ul>");
+    } else {
+      const p = [];
+      while (i < lines.length && lines[i].trim() && !/^(#{1,3} |>|- |-{3,}\s*$)/.test(lines[i])) p.push(inline(lines[i++]));
+      out.push("<p>" + p.join("<br>") + "</p>");
+    }
+  }
+  return out.join("\n");
+}
+
+const title = (name, text) => (text.match(/^# (.*)/m) || [, name.replace(/^\d+_|\.md$/g, "")])[1];
+
+async function main() {
+  const cfg = await fetch("/web/campaign.json", { cache: "no-store" }).then(r => r.ok ? r.json() : {}).catch(() => ({}));
+  if (cfg.title) document.title = cfg.title + " · 小说";
+  const files = (await (await fetch("/web/novel/", { headers: { Accept: "application/json" }, cache: "no-store" })).json())
+    .filter(f => !f.is_dir && f.name.endsWith(".md"))
+    .map(f => f.name).sort();
+  const texts = await Promise.all(files.map(n => fetch("/web/novel/" + encodeURIComponent(n), { cache: "no-store" }).then(r => r.text())));
+  const cur = new URLSearchParams(location.search).get("c");
+  const i = files.indexOf(cur);
+  if (i < 0) {
+    root.innerHTML = "<h1>小说</h1><div id='toc'></div>";
+    if (!files.length) { root.lastChild.textContent = "暂无章节"; return; }
+    files.forEach((n, k) => {
+      const a = document.createElement("a");
+      a.href = "?c=" + encodeURIComponent(n);
+      a.textContent = title(n, texts[k]);
+      a.insertAdjacentHTML("beforeend", "<small>第 " + (k + 1) + " 章</small>");
+      document.getElementById("toc").appendChild(a);
+    });
+    return;
+  }
+  document.title = title(cur, texts[i]) + (cfg.title ? " · " + cfg.title : "");
+  const link = (k, label) => k >= 0 && k < files.length ? `<a href="?c=${encodeURIComponent(files[k])}">${label}${esc(title(files[k], texts[k]))}</a>` : "<span></span>";
+  root.innerHTML = '<a class="back" href="/web/novel.html">← 目录</a>' + md(texts[i]) +
+    '<div class="pager">' + link(i - 1, "← ") + link(i + 1, "→ ") + "</div>";
+}
+main().catch(() => { root.textContent = "章节加载失败"; });
+</script>
+</body>
+</html>

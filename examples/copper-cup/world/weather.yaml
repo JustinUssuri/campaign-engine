@@ -1,0 +1,9 @@
+version: 1
+starts_at_elapsed: null
+seed: a711f2085403ec4c
+rain_percent:
+  秋: 15
+  冬: 30
+  春: 20
+  夏: 5
+regions: {}

@@ -1,0 +1,194 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+propertyNames: {pattern: '^Q-[0-9]+$'}
+additionalProperties: {$ref: '#/$defs/quest'}
+$defs:
+  text: {type: string, pattern: '\S'}
+  key: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'}
+  keys: {type: array, uniqueItems: true, items: {$ref: '#/$defs/key'}}
+  time: {type: string, pattern: '^D[1-9][0-9]* ([01][0-9]|2[0-3]):[0-5][0-9]$', x-msg: '写指定天数和钟点，如 D147 07:55'}
+  front_step:
+    type: object
+    additionalProperties: false
+    required: [id, step]
+    properties:
+      id: {type: string, pattern: '^front-[\w-]+$'}
+      step: {$ref: '#/$defs/text'}
+  entry:
+    type: object
+    additionalProperties: false
+    required: [kind, ref, text, objectives]
+    properties:
+      kind: {enum: [board, rumor, site, evidence]}
+      ref: {$ref: '#/$defs/text'}
+      text: {$ref: '#/$defs/text'}
+      objectives: {allOf: [{$ref: '#/$defs/keys'}, {minItems: 1}]}
+      publisher: {type: string, pattern: '^npc-[\w-]+$'}
+      start: {$ref: '#/$defs/time'}
+      end: {$ref: '#/$defs/time'}
+      front: {$ref: '#/$defs/front_step'}
+    if: {properties: {kind: {const: board}}, required: [kind]}
+    then: {required: [publisher]}
+  objective:
+    type: object
+    additionalProperties: false
+    required: [text]
+    properties:
+      text: {$ref: '#/$defs/text'}
+      after: {$ref: '#/$defs/keys'}
+      requires:
+        type: object
+        minProperties: 1
+        additionalProperties: false
+        properties:
+          item: {$ref: '#/$defs/text'}
+          fact: {$ref: '#/$defs/text'}
+          front: {$ref: '#/$defs/front_step'}
+  outcome:
+    type: object
+    additionalProperties: false
+    required: [text, after]
+    oneOf: [{required: [xp]}, {required: [xp_cr]}]
+    properties:
+      text: {$ref: '#/$defs/text'}
+      after: {$ref: '#/$defs/keys'}
+      xp_cr:
+        anyOf:
+          - {type: integer, minimum: 0, maximum: 30}
+          - {type: string, pattern: '^(0|[1-9]|[12][0-9]|30|1/[248])$'}
+        x-msg: '写 0–30 或带引号的 1/8、1/4、1/2'
+      xp:
+        type: string
+        pattern: '^(0|(任务)?CR\s*[0-9]+(/[0-9]+)?\s*→\s*[0-9]+)$'
+        x-msg: '写 "0" 或 "CR 1/2 → 100"'
+  commission:
+    type: object
+    additionalProperties: false
+    required: [giver, handoff, reward]
+    properties:
+      giver: {type: string, pattern: '^npc-[\w-]+$'}
+      handoff: {$ref: '#/$defs/text'}
+      reward: {$ref: '#/$defs/text'}
+  epic:
+    type: object
+    additionalProperties: false
+    required: [id, act, slot]
+    properties:
+      id: {type: string, pattern: '^epic-[a-z0-9][a-z0-9-]*$'}
+      act: {$ref: '#/$defs/key'}
+      slot: {$ref: '#/$defs/key'}
+  adaptation:
+    type: object
+    additionalProperties: false
+    required: [mode, source, section, fit, approaches, reachable_result]
+    properties:
+      mode: {enum: [module, original]}
+      source: {$ref: '#/$defs/text'}
+      section: {$ref: '#/$defs/text'}
+      fit: {$ref: '#/$defs/text'}
+      approaches:
+        type: array
+        minItems: 2
+        uniqueItems: true
+        items:
+          type: object
+          additionalProperties: false
+          required: [action, result]
+          properties:
+            action: {$ref: '#/$defs/text'}
+            result: {$ref: '#/$defs/text'}
+      reachable_result: {$ref: '#/$defs/text'}
+  reward_asset:
+    type: object
+    additionalProperties: false
+    required: [name, type]
+    properties:
+      name: {$ref: '#/$defs/text'}
+      type: {$ref: '#/$defs/key'}
+      magic: {$ref: '#/$defs/text'}
+      rarity: {enum: [Common, Uncommon]}
+    dependentRequired: {magic: [rarity], rarity: [magic]}
+  reward:
+    type: object
+    additionalProperties: false
+    required: [kind, clue, provenance]
+    properties:
+      kind: {enum: [commission, carried, hoard]}
+      site: {type: string, pattern: '^loc-[\w-]+$'}
+      holder: {type: string, pattern: '^npc-[\w-]+$'}
+      item: {type: string, pattern: '^item-[\w-]+$'}
+      asset: {$ref: '#/$defs/reward_asset'}
+      clue: {$ref: '#/$defs/key'}
+      provenance: {$ref: '#/$defs/text'}
+      outcome: {$ref: '#/$defs/key'}
+      found_fact: {$ref: '#/$defs/key'}
+    allOf:
+      - if: {properties: {kind: {const: hoard}}}
+        then:
+          required: [site]
+          propertyNames: {enum: [kind, site, clue, provenance, found_fact]}
+        else:
+          required: [holder]
+          oneOf: [{required: [item]}, {required: [asset]}]
+      - if: {properties: {kind: {const: commission}}}
+        then: {required: [outcome], not: {required: [found_fact]}}
+      - if: {properties: {kind: {const: carried}}}
+        then: {required: [site, found_fact], not: {required: [outcome]}}
+  quest:
+    type: object
+    additionalProperties: false
+    required: [id, kind, title, goal, entries, objectives, outcomes]
+    properties:
+      id: {type: string, pattern: '^Q-[0-9]+$'}
+      kind: {enum: [main, side]}
+      source: {enum: [location, acquaintance]}
+      epic: {$ref: '#/$defs/epic'}
+      play_type: {enum: [寻回或交付, 调查或追查, 探索, 交涉或调停, 排险]}
+      scale: {enum: [small, full, high]}
+      difficulty_basis: {$ref: '#/$defs/text'}
+      adaptation: {$ref: '#/$defs/adaptation'}
+      reward: {$ref: '#/$defs/reward'}
+      home: {type: string, pattern: '^loc-[\w-]+$'}
+      contact: {type: string, pattern: '^npc-[\w-]+$'}
+      clock: {enum: [discovery, world]}
+      commission: {$ref: '#/$defs/commission'}
+      sites:
+        type: array
+        uniqueItems: true
+        items: {type: string, pattern: '^loc-[\w-]+$'}
+      title: {$ref: '#/$defs/text'}
+      goal: {$ref: '#/$defs/text'}
+      entries:
+        type: object
+        minProperties: 1
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/entry'}
+      objectives:
+        type: object
+        minProperties: 1
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/objective'}
+      outcomes:
+        type: object
+        minProperties: 1
+        propertyNames: {$ref: '#/$defs/key'}
+        additionalProperties: {$ref: '#/$defs/outcome'}
+      refs: {type: array, uniqueItems: true, items: {$ref: '#/$defs/text'}}
+    dependentRequired:
+      clock: [source]
+      home: [source]
+      contact: [source]
+    allOf:
+      - if: {properties: {kind: {const: main}}, required: [kind]}
+        then: {not: {required: [source]}}
+      - if: {required: [epic]}
+        then: {properties: {kind: {const: main}}}
+        else:
+          if: {properties: {kind: {const: main}}}
+          then: {properties: {objectives: {minProperties: 2}}}
+      - if: {anyOf: [{required: [commission]}, {required: [sites]}, {required: [reward]}]}
+        then: {anyOf: [{required: [source]}, {required: [epic]}]}
+      - if: {properties: {source: {const: location}}, required: [source]}
+        then: {required: [home, clock], not: {required: [contact]}}
+      - if: {properties: {source: {const: acquaintance}}, required: [source]}
+        then: {required: [contact, clock], not: {required: [home]}}

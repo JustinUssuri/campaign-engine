@@ -1,0 +1,4 @@
+npc:
+  npc-hubert: {born: 1441, race: human}
+  npc-raymond: {born: 1461, race: human}
+  npc-mira-001: {born: 1474, race: human}

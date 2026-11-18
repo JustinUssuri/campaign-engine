@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "campaign-hook pre-tool", "timeout": 10}]}],
+    "PostToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "campaign-hook post-tool", "timeout": 10}]}],
+    "AfterAgent": [{"hooks": [{"type": "command", "command": "campaign-hook after-agent", "timeout": 10}]}],
+    "BeforeAgent": [{"hooks": [{"type": "command", "command": "campaign-hook before-agent", "timeout": 10}]}],
+    "SessionStart": [{"matcher": "startup|resume|compact", "hooks": [{"type": "command", "command": "campaign-hook session-start", "timeout": 15}]}]
+  }
+}

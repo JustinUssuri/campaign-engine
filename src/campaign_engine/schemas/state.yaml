@@ -1,0 +1,790 @@
+# state.yaml 的结构：JSON Schema（2020-12），用 YAML 写，好加注释。campaign.py validate 强制执行；
+# 报错时取出错位置的 x-msg 附在后面（字符串，或按关键字分：{required: …, enum: …}）。
+# 加新结构：在对应位置加 properties（顶层和 scene 不许多键）；再想清楚它归不归引擎（x-engine-owned）。
+# 跨引用（ID 都登记过、in 指向登记实体、容器不成环）和数值关系（HP ≤ 上限）在 engine/schema.py 手写检查。
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: campaign:state
+title: state.yaml
+
+# 引擎独占字段：这些 JSON Pointer 下的值只能经动作改（turn do set / unset / replace 改到就拒，值是该用的动作）。
+# 段写 * 匹配任意一个键。
+x-engine-owned:
+  /scheduled_result_receipts: 定时结果由 advance 执行；告知用 schedule report
+  /timed_positions: 已登记定时去向由 advance 同步，显式位置用 enter / leave
+  /flight: turn do flight start / land / weigh
+  /journey: turn do travel start / continue / cancel
+  /characters/*/travel_days: 距离行程由travel/advance累计当日行进秒数，不因取消或换路线清零
+  /characters/*/rations_fed_days: turn do travel / advance / fed
+  /effects: turn do cast / effect / focus / advance
+  /characters/*/concentration: turn do cast / focus / effect
+  /characters/*/effects_managed: turn do cast / focus / effect
+  /last_applied_event: 引擎分配事件号
+  /scene/in_world_time: turn do advance
+  /weather: 旱情随游戏时钟自动结算
+  /scene/location_id: turn do move
+  /scene/present_entity_ids: turn do enter / leave
+  /characters/pc-001/current_form: turn do shape / advance（到期变回龙身）
+  /characters/pc-001/dragon_growth: 生日后的龙身长休依 HR-008 结算
+  /characters/pc-001/hp_current: turn do hp / rest
+  /characters/pc-001/temporary_hp: turn do hp
+  /characters/pc-001/hit_dice: turn do rest / spend 生命骰
+  /characters/pc-001/resources: turn do spend / font / rest / recharge
+  /characters/pc-001/shapechange: turn do shape / advance（自动续施）
+  /characters/pc-001/last_long_rest: turn do rest long
+  /characters/pc-001/rest_carry: turn do advance（睡、出神的末段，下回合接着算长休）
+  /characters/pc-001/control: turn do control set / where / end
+  /characters/pc-001/xp: turn do quest resolve / fight end / xp give / xp take
+  /characters/*/xp: turn do quest resolve --with / fight end / xp give / xp take / xp train / advance（学徒每天 +2.5）
+  /characters/*/hp_current: turn do attack / damage / heal（战斗里记，fight end 写回）/ rest long 回满
+  /characters/*/uses: turn do heal --use 回气 等（fight end 写回）/ rest
+  /characters/*/hit_dice_expended: turn do rest（短休花、长休回满）
+  /combat: turn do fight / attack / save / damage / heal / condition / focus / next / out / pos
+  /ledger: turn do pay / move-money / debt / receivable / exchange
+  /items: turn do give / lend / put / use / buy / sell / new-item / drop-item / edit-item / kit
+  /schedule: turn do schedule … / industry …
+  /opportunities: turn do opportunity refresh / status
+  /adventure_prep: 抵达、正式任务结项或入口到期时自动更新当地短冒险准备
+
+# 可以新建键的地方（turn do set 键=值 给的键不存在时）：别处的键必须已经有（防手误建出新字段）。值是 JSON Pointer 的正则。
+x-new-keys:
+  - ^/scene/off_scene_npcs$
+  - ^/npc_status(/[^/]+)*$
+  - ^/handoff$   # 维护留给游戏的事：admin set handoff.下个游戏回合要做 […]（开局一屏递给主持）
+  - ^/ledger/accounts/[^/]+(/[^/]+)*$
+  - ^/characters/pc-001/shapechange$   # 父层：HR-001 成年前兆的 lasting、lasting_pending 由维护 admin set（E1737 后玩家定；turn do set 改不了引擎字段）
+  - ^/characters/npc-[^/]+$   # 队友：维护补引擎漏记的字段（E2977 补记雷蒙德 E2975 短休花掉的 hit_dice_expended）
+
+# 字段级规则（JSON 字节数，超了给警告）：只写现状，来龙去脉在日志。v3 起没有 state 总上限和分区预算。
+x-budgets:
+  quest_each: 1200
+  item_each: 500
+  npc_field_each: 600
+
+type: object
+additionalProperties: false
+x-msg: {additionalProperties: 如需新结构，先在 schemas/state.yaml 登记}
+required: [schema_version, clock_anchor_minutes_of_day, last_applied_event, session, scene, characters,
+           quests, quests_resolved, combat, pending_action, npc_status, handoff, schedule, ledger, items]
+allOf:
+  - if:
+      properties:
+        schema_version: {minimum: 8}
+    then:
+      properties:
+        npc_status:
+          additionalProperties:
+            propertyNames: {$ref: '#/$defs/npc_status_fields'}
+        schedule:
+          additionalProperties:
+            properties:
+              kind:
+                not: {const: routine}
+                x-msg: 作息表已退役
+
+properties:
+  weather:
+    type: object
+    additionalProperties: false
+    required: [version, drought]
+    properties:
+      version: {const: 1}
+      drought:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [status, rain_days]
+          properties:
+            status: {enum: [drought, persists, recovering, recovered]}
+            rain_days: {type: array, uniqueItems: true, items: {type: integer, minimum: 1}}
+            persisted_on_day: {type: integer, minimum: 1}
+            recovery_due_elapsed: {type: integer, minimum: 0}
+            recovered_at_elapsed: {type: integer, minimum: 0}
+  adventure_prep:                # 各地最近一次短冒险准备触发的事件。
+    type: object
+    patternProperties:
+      '^loc-[\w-]+$': {type: string, pattern: '^E\d{4,}$'}
+    additionalProperties: false
+  flight:
+    type: object
+    additionalProperties: false
+    properties:
+      airborne:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [riders]
+          properties:
+            riders: {type: array, items: {type: string}, uniqueItems: true}
+            off_scene: {const: true}  # 新巡航明确留在原处的飞行者，未假定落地。
+      cruise:
+        type: object
+        additionalProperties: false
+        required: [flyer, target, contact, origin, actors, started_at, progress_seconds]
+        allOf:
+          - if: {properties: {contact: {const: local}}}
+            then: {required: [anchor]}
+          - if: {properties: {contact: {const: high}}}
+            then: {not: {required: [anchor]}}
+        properties:
+          flyer: {type: string, minLength: 1}
+          target: {type: string, pattern: '^loc-'}
+          contact: {enum: [high, local]}
+          origin: {type: string, minLength: 1}
+          actors: {type: array, items: {type: string}, uniqueItems: true}
+          started_at: {type: integer, minimum: 0}
+          progress_seconds: {type: integer, minimum: 0}
+          anchor:
+            type: object
+            additionalProperties: false
+            required: [loc, at, source]
+            properties:
+              loc: {type: string, pattern: '^loc-'}
+              at: {type: integer, minimum: 0}
+              source: {type: string, minLength: 1, pattern: '\S'}
+      masses:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            body:
+              type: object
+              additionalProperties: false
+              required: [lb, source, form]
+              properties:
+                lb: {type: number, exclusiveMinimum: 0}
+                source: {type: string, minLength: 1, pattern: '\S'}
+                form: {type: string, minLength: 1}
+            cash:
+              type: object
+              additionalProperties: false
+              required: [lb, source, snapshot]
+              properties:
+                lb: {type: number, minimum: 0}
+                source: {type: string, minLength: 1, pattern: '\S'}
+                snapshot: {type: object, additionalProperties: {type: object}}
+  scheduled_result_receipts:
+    type: object
+    additionalProperties: {type: object}
+  timed_positions:
+    type: object
+    additionalProperties:
+      type: object
+      required: [at, source]
+      properties:
+        at: {type: integer}
+        source: {type: string}
+  journey:
+    type: object
+    additionalProperties: false
+    required: [route, snapshot, durations, remaining, segment, started, party, animals, vehicle, routine, fed, status, last, location]
+    properties:
+      route: {type: string}
+      snapshot: {type: object}
+      durations: {type: array, items: {type: integer, minimum: 1}}
+      remaining: {type: array, items: {type: integer, minimum: 0}}
+      segment: {type: integer, minimum: 0}
+      started: {type: integer, minimum: 0}
+      party: {type: array, items: {type: string}, uniqueItems: true}
+      animals: {type: array, items: {type: string}, uniqueItems: true}
+      vehicle: {type: [string, 'null']}
+      routine: {type: object}
+      transport: {type: object}
+      distance:
+        type: object
+        additionalProperties: false
+        required: [remaining_miles, travel_start, roads]
+        properties:
+          remaining_miles: {type: array, items: {type: number, minimum: 0}}
+          travel_start: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+          roads: {type: object, additionalProperties: {enum: [好, 差, 很差]}}
+      no_grazing: {type: boolean}  # 本次行程无采食机会，牲口全额补料；默认不写
+      fed: {type: integer, minimum: 0}
+      status: {enum: [进行, 暂停, 已到达, 已取消]}
+      last: {type: integer, minimum: 0}
+      location: {type: string}
+      reason: {type: string}
+  effects:
+    type: object
+    additionalProperties:
+      type: object
+      required: [spell, caster, target, source, group, start, ends, concentration, params]
+      properties:
+        spell: {type: string}
+        caster: {type: string}
+        target: {type: string}
+        source: {type: string}
+        group: {type: string}
+        start: {type: integer, minimum: 0}
+        ends: {type: integer, minimum: 0}
+        concentration: {type: boolean}
+        params: {type: object}
+        turn_end: {type: object}
+        ethereal: {type: boolean}
+  opportunities:
+    type: object
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      required: [batch, entries]
+      properties:
+        batch: {type: integer, minimum: -1}
+        entries:
+          type: array
+          items:
+            type: object
+            required: [id, text, source, status]
+            properties:
+              id: {type: string, minLength: 1}
+              text: {type: string, minLength: 1}
+              source: {type: string, minLength: 1}
+              status: {enum: [开放, 已报名, 已婉拒, 已结束, 已取消]}
+  schema_version: {type: integer}
+  clock_anchor_minutes_of_day: {type: integer, minimum: 0, maximum: 1439}
+  last_applied_event: {type: string, pattern: '^E\d{4,}$'}
+
+  session:
+    type: object
+    required: [id, resume_point]
+    properties:
+      id: {type: string}
+      status: {type: string}
+      log_dir: {type: string}       # v3：分段日志目录（sessions/log）
+      latest_log: {type: string}    # 旧布局：单文件日志
+      resume_point: {type: [string, 'null']}
+    anyOf: [{required: [log_dir]}, {required: [latest_log]}]
+    x-msg: {anyOf: 缺 session.log_dir（分段日志目录；旧布局是 session.latest_log）}
+
+  scene:
+    type: object
+    additionalProperties: false
+    x-msg:
+      additionalProperties: 一时的背景写进正文，不存（E1674 后：background_presence、npc_activity 换地点不清，过期内容被当现场）
+    required: [location_id, in_world_time]
+    properties:
+      active_pov: {type: string}
+      location_id: {type: string}
+      location_description: {type: [string, 'null']}
+      in_world_time:
+        type: object
+        required: [campaign_day, time_of_day, elapsed_minutes_from_opening]
+        properties:
+          campaign_day: {type: integer}
+          second: {type: integer, minimum: 0, maximum: 59}
+          time_of_day: {type: string}
+          elapsed_minutes_from_opening: {type: integer, minimum: 0}
+          calendar_date: {type: string}
+      present_entity_ids: {type: array, items: {type: string}, uniqueItems: true}
+      off_scene_npcs:   # 不在场的人此刻在哪、做什么（写已登记的地名）
+        type: [object, 'null']
+        additionalProperties: {type: [string, 'null']}
+
+  characters:
+    type: object
+    minProperties: 1
+    properties:
+      pc-001:
+        type: object
+        required: [xp, hp_current, hp_max, hit_dice]
+        properties:
+          xp: {type: integer, minimum: 0}
+          xp_next_level: {type: [integer, 'null']}
+          current_form: {type: string}
+          travel_days: {type: object, additionalProperties: {type: integer, minimum: 0, maximum: 28800}}
+          hp_current: {type: integer}
+          hp_max: {type: integer, minimum: 1}
+          dragon_growth:
+            type: object
+            required: [stage, event, completed_at_elapsed]
+            additionalProperties: false
+            properties:
+              stage: {type: integer, minimum: 0, maximum: 5}
+              event: {type: string, pattern: '^E[0-9]{4,}$'}
+              completed_at_elapsed: {type: integer, minimum: 0}
+          temporary_hp: {type: integer, minimum: 0}
+          hit_dice:
+            type: object
+            additionalProperties:
+              type: object
+              required: [die, total, expended]
+              properties:
+                die: {type: string, pattern: '^d\d+$'}
+                total: {type: integer, minimum: 0}
+                expended: {type: integer, minimum: 0}
+          resources:
+            type: object
+            properties:
+              spell_slots:
+                type: object
+                additionalProperties:
+                  type: object
+                  required: [current, max]
+                  properties:
+                    current: {type: integer, minimum: 0}
+                    max: {type: integer, minimum: 0}
+                    created: {type: [integer, 'null'], minimum: 0}
+              sorcery_points: {$ref: '#/$defs/pool'}
+              innate_sorcery: {$ref: '#/$defs/pool'}
+          shapechange:
+            type: object
+            required: [active, cast_at_elapsed, expires_at_elapsed]
+            properties:
+              active: {type: boolean}
+              cast_at_elapsed: {type: [integer, 'null']}
+              expires_at_elapsed: {type: [integer, 'null']}   # 不限时（lasting）时为 null
+              lasting: {type: boolean}           # HR-001 成年前兆：变形不限时（E1737 后玩家定）
+              lasting_pending: {type: boolean}   # 等着生效：下一次龙身睡满的长休结束时变成 lasting
+          rest_carry:   # 上回合末尾的睡、出神段：被察觉截停后接着睡/出神连着算（E2631 后玩家定）
+            type: object
+            required: [from, to, as, form]
+            properties:
+              from: {type: integer}
+              to: {type: integer}
+              as: {type: string}
+              form: {type: string}
+          home_loc: {type: string}
+          control:   # 受控（被支配）：推进只截在节点和遭遇，受伤要重豁（engine/control.py，2026-10-25 玩家定）
+            type: object
+            required: [by, save, dc, why, since]
+            properties:
+              by: {type: string}
+              range: {type: [integer, 'null']}
+              save: {type: string}
+              dc: {type: integer}
+              why: {type: string}
+              since: {type: string}
+              mod: {type: integer}                 # 她的豁免加值（一英里外重豁用）
+              where: {enum: [近, 出, 远]}          # 近＝范围内受控；出＝出了范围只是魅惑；远＝一英里以上，累计满 24 小时重豁
+              away:
+                type: object
+                required: [before, since, saves]
+                properties:
+                  before: {type: integer}          # 之前几段在一英里外累计的分钟
+                  since: {type: [integer, 'null']} # 这一段从哪一刻起（不在远就是 null）
+                  saves: {type: integer}           # 已经掷过几次
+    additionalProperties:   # 队员：职业卡队友（雷蒙德，2026-10-16 场外）、学徒档队友（xp join，2026-10-18）；经验均分
+      type: object
+      properties:
+        apprentice: {type: boolean}   # 学徒（xp train 开练）：满 150 进学徒档，满 450 转职业 1 级，转后去掉、xp 归 0
+        train: {type: string}         # 跟谁学什么（在练）
+        train_days: {type: integer, minimum: 0}   # 练了几天（经验按 floor(2.5×天) 累计）
+        train_paused: {type: string}  # 停练理由（xp train 名字 --pause）
+        gate: {enum: [魔法天赋, 神眷]}  # 学施法 / 侍奉神：满 150 不自动进学徒档，过了那一关 xp train --stage
+        level: {type: integer, minimum: 1, maximum: 20}
+        xp: {type: integer, minimum: 0}
+        xp_next_level: {type: [integer, 'null']}
+        hp_current: {type: integer, minimum: 0}   # 受了伤才有（战斗结束时写回；满血就去掉）
+        uses: {type: object, additionalProperties: {type: integer, minimum: 0}}   # 卡上记次数的本事还剩几次（回气、动作如潮）
+        hit_dice_expended: {type: integer, minimum: 0}   # 短休花掉的生命骰（卡上写 生命骰；长休回满去掉）
+
+  kobold_cohorts:
+    type: array
+    items:
+      type: object
+      required: [id, count, born_day]
+      properties:
+        id: {type: string}
+        count: {type: integer, minimum: 0}
+        born_day: {type: integer}
+
+  quests:   # 新任务只保存已经公开的内容。旧自由字段继续读取。
+    type: array
+    items:
+      if: {required: [quest_version]}
+      then:
+        allOf:
+          - {$ref: '#/$defs/public_quest'}
+          - {properties: {status: {enum: [open, active, shelved]}}}
+      else:
+        type: object
+        required: [id, title, status, xp]
+        x-msg: {required: 接任务时定任务CR，写 xp（rules.md 经验值制）}
+        properties:
+          id: {type: string, pattern: '^Q-\d+$'}
+          title: {type: string}
+          status:
+            enum: [open, active, underway, research, in_progress, escort_done, learned]
+            x-msg: 已完成任务请移到 quests_resolved（turn do quest resolve）
+          xp: {type: string}
+
+  quests_resolved:
+    type: array
+    items:
+      if: {type: string}
+      then:
+        pattern: xp
+        x-msg: 已结任务行末写“｜xp CR?→N”
+      else:
+        allOf:
+          - {$ref: '#/$defs/public_quest'}
+          - required: [outcome, summary, resolved, xp]
+            properties: {status: {const: resolved}}
+
+  combat: {type: object}
+  pending_action: {}   # 没做完的行动（意图 ≠ 完成）
+  handoff: {}
+
+  npc_status:   # NPC 会变的现状，每项只写当前值（底卡只放不变设定）
+    type: object
+    additionalProperties:
+      type: [object, string]   # 字符串只用于 _说明
+      propertyNames: {$ref: '#/$defs/legacy_npc_status_fields'}
+      additionalProperties: {type: string}
+
+  schedule:
+    type: object
+    additionalProperties: {$ref: '#/$defs/schedule_entry'}
+
+  ledger:
+    type: object
+    required: [accounts]
+    properties:
+      billing:
+        type: object
+        additionalProperties: false
+        required: [version, since_event, since, opening, account_info]
+        properties:
+          version: {const: 1}
+          since_event: {type: string}
+          since: {type: integer}
+          opening:
+            type: object
+            additionalProperties: {$ref: '#/$defs/cash_bundle'}
+          account_info: {type: object}
+          opening_business: {type: object}
+          settled: {type: object}
+          closed_months: {type: array, items: {type: string}}
+          transactions: {type: array}
+          settlements: {type: object}
+          months: {type: object}
+      cash_version: {const: 1}
+      cash_cutover: {type: string}
+      exchange_terms:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [account, counterparty, counterparty_account, at, give, receive, limit, period_days, stock_type, start_day, why, since, used]
+          properties:
+            account: {type: string, minLength: 1}
+            counterparty: {type: string, minLength: 1}
+            counterparty_account: {type: [string, 'null']}
+            at: {type: string, pattern: '^loc-'}
+            give: {$ref: '#/$defs/cash_bundle'}
+            receive: {$ref: '#/$defs/cash_bundle'}
+            limit: {type: integer, minimum: 1}
+            period_days: {type: [integer, 'null'], minimum: 1}
+            stock_type: {type: [string, 'null']}
+            start_day: {type: integer, minimum: 1}
+            why: {type: string, minLength: 1}
+            since: {type: string}
+            used:
+              type: object
+              propertyNames: {pattern: '^\d+$'}
+              additionalProperties: {type: integer, minimum: 0}
+      accounts:
+        type: object
+        additionalProperties:
+          type: object
+          required: [owner]
+          properties:
+            owner: {type: string, minLength: 1}
+            where: {type: string}
+            coins:
+              type: object
+              propertyNames: {enum: [gp, sp, cp], x-msg: 币种只用 gp/sp/cp}
+              additionalProperties: {type: integer, minimum: 0}
+            change: {type: boolean}
+            default: {type: boolean}
+      debts:
+        type: array
+        items:
+          type: object
+          required: [id, from, to, amount]
+          properties: {id: {type: string}, from: {type: string}, to: {type: string}, amount: {type: string}}
+      receivables:
+        type: array
+        items:
+          type: object
+          required: [id, from, to]
+          properties: {id: {type: string}, from: {type: string}, to: {type: string}, amount: {type: [string, 'null']}}
+
+  items:   # 物品：owner（主人）和 in（在哪：地点、容器物品、牲口、人）分开；类型（重量、单位、种类、数据卡）在货品表 world/prices.yaml，实例只存状态（2026-10-26）
+    type: object
+    additionalProperties:
+      type: object
+      required: [in]
+      anyOf: [{required: [name]}, {required: [type]}]
+      x-msg: 写 type（货品表的类型）或 name
+      properties:
+        feed_days: {type: array, items: {type: integer}}
+        retail_since_day: {type: integer, minimum: 1}
+        type: {type: string, minLength: 1}   # 货品表的键：重量、单位、种类、数据卡、默认部位、容量都从它来
+        name: {type: string, minLength: 1}   # 独一件的小名或一句描述；货不写，显示类型名
+        in: {type: string, minLength: 1, x-msg: 写地点 ID、容器物品 ID 或人}
+        how: {enum: [放着, 装着, 拿着, 带着, 穿戴, 牵着, 套着, 驮着]}   # 跟上级的关系；不写照去处推
+        slot: {enum: [衣, 甲, 头, 斗篷, 手, 腕, 脚, 饰品]}           # 穿戴的部位（SRD 同类物品＋一套衣服）
+        team: {type: array, items: {type: string}}                  # 车的常用牲口（物品 ID）：交到人手上时同处的都套上
+        同调: {type: string}                                          # 跟谁同调了（SRD：最多三件）
+        hp: {type: [number, 'null']}
+        since: {type: string}
+        owner: {type: [string, array]}
+        spot: {type: string}
+        kind: {type: string}       # 旧东西（没写 type）的字段：kind、unit、card、weight
+        qty: {type: [number, 'null'], minimum: 0}
+        uses: {type: [number, 'null'], minimum: 0}
+        unit: {type: string}
+        note: {type: string}
+        card: {type: string}       # 牲口的 rules/srd 数据卡名（HR-005：驴 Donkey、骡 Mule；役马 Draft Horse、挽马 Cart Horse），items 查到时算能驮能拉
+        magic:                     # 宝堆里翻出的魔法物品（turn do loot）：名＝规则书条目，识＝鉴定过没有（turn do identify）
+          type: object
+          required: [名, 中文, 识]
+          properties: {名: {type: string}, 中文: {type: string}, 识: {type: boolean}}
+        weight: {type: number, minimum: 0}           # 每份重量（磅）；车是自重
+
+  # 塔莉娅的大秘密谁知道、谁以为什么：v3 起是事实账本里 kind 秘密的私下事实（migrate_v3_secrets 迁过去），state 不再有 secrets
+
+$defs:
+  npc_status_fields:
+    enum: [home, work]
+    x-msg: 现状只写住处和现职。关系、知情及物品用各自登记入口
+  legacy_npc_status_fields:
+    enum: [home, work, ties, wears, belongings]
+    x-msg: 历史现状字段
+  quest_event: {type: string, pattern: '^E[0-9]{4,}$'}
+  public_quest:
+    type: object
+    additionalProperties: false
+    required: [quest_version, id, title, kind, entries, objectives, status]
+    properties:
+      quest_version: {const: 1}
+      id: {type: string, pattern: '^Q-\d+$'}
+      title: {type: string, minLength: 1}
+      kind: {enum: [main, side]}
+      status: {enum: [open, active, resolved, shelved]}
+      first_seen:
+        type: object
+        additionalProperties: false
+        required: [event, minute]
+        properties:
+          event: {$ref: '#/$defs/quest_event'}
+          minute: {type: integer}
+      shelved: {$ref: '#/$defs/quest_event'}
+      accepted: {$ref: '#/$defs/quest_event'}
+      resolved: {$ref: '#/$defs/quest_event'}
+      outcome: {type: string, minLength: 1}
+      summary: {type: string, minLength: 1}
+      xp: {type: string}
+      entries:
+        type: object
+        minProperties: 1
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [text, event]
+          properties:
+            text: {type: string, minLength: 1}
+            event: {$ref: '#/$defs/quest_event'}
+      objectives:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [text, revealed]
+          dependentRequired:
+            achieved: [evidence]
+            evidence: [achieved]
+          properties:
+            text: {type: string, minLength: 1}
+            revealed: {$ref: '#/$defs/quest_event'}
+            achieved: {$ref: '#/$defs/quest_event'}
+            evidence: {type: string, minLength: 1}
+    allOf:
+      - if: {properties: {status: {enum: [active, resolved]}}}
+        then: {required: [accepted]}
+        else: {not: {required: [accepted]}}
+      - if: {properties: {status: {const: shelved}}}
+        then: {required: [first_seen, shelved], properties: {kind: {const: side}}}
+        else: {not: {required: [shelved]}}
+      - if: {properties: {status: {const: resolved}}}
+        then: {required: [resolved, outcome, summary, xp]}
+        else:
+          not:
+            anyOf: [{required: [resolved]}, {required: [outcome]}, {required: [summary]}, {required: [xp]}]
+  cash_bundle:
+    type: object
+    minProperties: 1
+    propertyNames: {enum: [gp, sp, cp]}
+    additionalProperties: {type: integer, minimum: 0}
+  pool:
+    type: object
+    required: [current, max]
+    properties:
+      current: {type: integer, minimum: 0}
+      max: {type: integer, minimum: 0}
+
+  schedule_entry:
+    type: object
+    required: [kind, status, since]
+    properties:
+      prepare: {const: world}
+      checkpoint: {const: true}
+      checkpoint_next_at: {type: integer}
+      checkpoint_opportunity: {type: string, minLength: 1}
+      purchase_need_generation: {type: integer, minimum: 1}
+      checkpoint_cancellation: {type: string, minLength: 1}
+      business:
+        type: object
+        required: [accounts, operations, why]
+        dependentRequired: {need: [purchase], need_witnesses: [need]}
+        additionalProperties: false
+        properties:
+          accounts: {type: object, minProperties: 1, additionalProperties: {type: array, minItems: 1, uniqueItems: true, items: {enum: [gp, sp, cp]}}}
+          operations: {type: array, uniqueItems: true, items: {enum: [buy, sell, pay, put, smelt, exchange]}}
+          why: {type: string, minLength: 1}
+          need: {type: string, minLength: 1}
+          need_witnesses: {type: array, minItems: 1, uniqueItems: true, items: {type: string, pattern: '^npc-'}}
+          purchase:
+            type: object
+            additionalProperties: false
+            required: [authority, account, type, qty, item_id, deliver_to]
+            properties:
+              authority: {type: string, minLength: 1}
+              account: {type: string, minLength: 1}
+              type: {type: string, minLength: 1}
+              qty: {type: number, exclusiveMinimum: 0}
+              item_id: {type: string, pattern: '^item-'}
+              deliver_to: {type: string, pattern: '^loc-'}
+          reporters: {type: array, minItems: 1, items: {type: string}}
+          excluded_categories: {type: array, items: {type: string}}
+          aid_collection: {type: boolean}
+          dividend: {type: object}
+          capital_cp: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        if: {required: [aid_collection], properties: {aid_collection: {const: true}}}
+        then: {properties: {operations: {maxItems: 0}}}
+        else: {properties: {operations: {minItems: 1}}}
+      purchase_receipt:
+        type: object
+        required: [event, step, paid_cp]
+        additionalProperties: false
+        properties:
+          event: {type: string, pattern: '^E[0-9]+$'}
+          step: {type: string, minLength: 1}
+          paid_cp: {type: integer, minimum: 1}
+      service:
+        type: object
+        additionalProperties:
+          type: object
+          required: [role, start, paid_days]
+          additionalProperties: false
+          properties:
+            role: {enum: [士兵, 守备队长, 亲卫队长, 公爵之手, 试住照护]}
+            start: {type: integer, minimum: 1}
+            end: {type: integer, minimum: 2}
+            paid_days: {type: integer, minimum: 0}
+            interval: {type: integer, minimum: 1}
+            daily_cp: {type: integer, minimum: 1}
+          if: {properties: {role: {const: 试住照护}}}
+          then: {required: [end, interval, daily_cp]}
+          else:
+            properties:
+              interval: false
+              daily_cp: false
+      managed_by: {type: string, pattern: '^npc-'}
+      funding_trip:
+        type: object
+        required: [cycle, departed, arrive_day]
+        properties:
+          cycle: {type: integer, minimum: 1}
+          departed: {type: integer, minimum: 0}
+          arrive_day: {type: integer, minimum: 1}
+      last_pickup_cycle: {type: integer, minimum: 1}
+      player_reminder: {type: boolean}
+      exception: {type: string, minLength: 1}
+      duchy_exception: {type: string, minLength: 1}
+      result_generation: {type: integer, minimum: 0}
+      execution:
+        type: object
+        required: [steps]
+        properties:
+          steps: {type: array, minItems: 1, items: {type: object}}
+      kind: {enum: [once, daily, tenday_end, monthly, every_n_days, yearly, routine, clock, concern]}
+      status: {enum: [active, paused, due, done]}
+      since: {type: string, minLength: 1, x-msg: 写来源事件}
+      what: {type: string}
+      who: {type: array, items: {type: string}}
+      where: {type: array, items: {type: string}}
+      seen_at: {type: array, items: {type: string}}
+      due_day: {type: [integer, 'null']}
+      n: {type: [integer, 'null'], minimum: 1}
+      next_day: {type: [integer, 'null']}
+      effect: {$ref: '#/$defs/effect'}
+      transit_trip:
+        type: object
+        required: [cycle, departed, arrive_day]
+        properties:
+          cycle: {type: integer, minimum: 1}
+          departed: {type: integer, minimum: 0}
+          arrive_day: {type: integer, minimum: 1}
+      last_pickup_cycle: {type: integer, minimum: 1}
+      periodic_exception: {type: string, minLength: 1}
+    anyOf: [{required: [effect]}, {required: [what]}]
+    x-msg: {anyOf: 须有 effect（引擎执行）或 what（主持裁决）}
+    allOf:
+      - if: {properties: {kind: {const: once}}}
+        then:
+          anyOf: [{required: [due_day], properties: {due_day: {type: integer}}}, {required: [until]}]
+          x-msg: once 须有 due_day 或 until
+      - if: {properties: {kind: {const: every_n_days}}}
+        then:
+          required: [n, next_day]
+          properties: {n: {type: integer}, next_day: {type: integer}}
+          x-msg: every_n_days 须有 n 和 next_day
+      - if: {properties: {kind: {const: clock}}}
+        then:
+          required: [steps]
+          properties:
+            steps:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                required: [day, what]
+                properties: {day: {type: integer}, what: {type: string, minLength: 1}}
+          x-msg: clock 须有 steps（每步 day 整数、what）
+      - if: {properties: {kind: {const: concern}}}
+        then:
+          required: [who, n, due_day]
+          properties: {who: {minItems: 1}, n: {type: integer}, due_day: {type: integer}}
+          x-msg: concern 须有 who、n、due_day
+      - if: {properties: {kind: {const: routine}}}
+        then:
+          required: [who, where]
+          properties: {who: {minItems: 1}, where: {minItems: 1}}
+          x-msg: routine 须有 who 和 where
+
+  effect:   # 安排的效果（引擎执行）：--effect 的写法见 turn ops
+    type: object
+    required: [type]
+    properties:
+      type: {enum: [pay, roll_pay, net_settlement, transit_transfer, payroll, cohort, count, aging]}
+      coinage: {enum: [cp, mixed]}
+      location: {type: string}
+      settle_debt: {type: object, required: [id, from, to, amount], description: 一次性付款对应的原欠款快照，实付成功才结清}
+    allOf:
+      - if: {properties: {type: {const: net_settlement}}}
+        then: {required: [amount_cp]}
+      - if: {properties: {type: {const: transit_transfer}}}
+        then: {required: [from, via, to, amount_cp, first_day, interval_days, transit_days]}
+      - if: {properties: {type: {const: payroll}}}
+        then: {required: [from, service]}
+      - if: {properties: {type: {const: pay}}}
+        then: {required: [amount, to], properties: {per: {enum: [workday]}}}
+      - if: {properties: {type: {const: roll_pay}}}
+        then: {required: [roll, to], properties: {unit: {enum: [gp, sp, cp]}}}
+      - if: {properties: {type: {const: cohort}}}
+        then: {required: [roll]}
+      - if: {properties: {type: {const: count}}}
+        then: {required: [key]}

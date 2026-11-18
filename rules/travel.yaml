@@ -1,0 +1,44 @@
+# HR 旅行倍率（2026-11-05 玩家批准）：仅为现实资料校准的游戏取值。
+# 一行进日八小时，基准是健康且适应旅行的轻载骑乘马在好路上的30英里。
+version: 1
+base_miles_per_day: 30
+hours_per_day: 8
+# 飞行：原SRD正常旅行时速（Fly尺值/10）乘5；与地面分开，不套载重/路况倍率。
+flight:
+  normal_speed_multiplier: 5
+species:
+  human: {name: 人, factor: '2/3'}
+  horse: {name: 马, factor: 1}
+  mule: {name: 骡, factor: 0.9}
+  donkey: {name: 驴, factor: 0.6}
+  camel: {name: 骆驼, factor: 1}
+animal_types:
+  donkey: donkey
+  mule: mule
+  draft-horse: horse
+  cart-horse: horse
+  riding-horse: horse
+  warhorse: horse
+  camel: camel
+legacy_cards:
+  Donkey: donkey
+  Mule: mule
+  Cart Horse: horse
+  Riding Horse: horse
+  Warhorse: horse
+  Camel: camel
+load_bands:
+  - {name: 轻载, max_share: '1/3', factor: 1}
+  - {name: 中载, max_share: '2/3', factor: 0.8}
+  - {name: 重载, max_share: 1, factor: 0.6}
+roads:
+  好: {name: 坚实畅通, factor: 1}
+  差: {name: 连续坑洼碎石浅泥, factor: 0.75}
+  很差: {name: 深泥松沙严重车辙, factor: 0.5}
+# 正常商业满载的整队速度模板；替代逐车核货，不是另乘一次物种/载重。
+# 以下是好路标准进度，运行时只另乘当前路况一次。
+caravans:
+  horse: {name: 满载马车队, miles_per_day: 18, transport_kind: cart}
+  camel: {name: 满载驼队, miles_per_day: 18, transport_kind: pack}
+  mule: {name: 满载骡车队, miles_per_day: 16.2, transport_kind: cart}
+  donkey: {name: 满载驴车队, miles_per_day: 10.8, transport_kind: cart}

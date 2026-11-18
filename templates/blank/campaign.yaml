@@ -1,0 +1,13 @@
+title: "__CAMPAIGN_TITLE__"
+protagonist:
+  id: pc-001
+  name: "__PROTAGONIST__"
+  card_name: "__PROTAGONIST__"
+  aliases: ["__PROTAGONIST__"]
+calendar:
+  epoch_year: 1501
+  epoch_month: Flamerule
+  epoch_day: 1
+extensions: []
+style:
+  banned_patterns: []

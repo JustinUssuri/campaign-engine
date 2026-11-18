@@ -1,0 +1,151 @@
+# 日志事件 v3：sessions/log/E….jsonl 的一行（turn commit 写，narrate 补正文）。JSON Schema 2020-12。
+# 新事件带 v: 3，写盘前先过这份 schema（不合格是引擎的错，不是主持的）。旧事件（没有 v）不改写，读的时候由
+# store.adapt 按版本适配。工作块 D、E 会加 facts（事实操作）和结构化的 NPC 判断，届时一并改这里。
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: campaign:event
+title: 日志事件 v3
+type: object
+additionalProperties: false
+required: [v, id, session, time, elapsed_from, elapsed_to, clock_to, title]
+properties:
+  v: {const: 3}
+  id: {type: string, pattern: '^E\d{4,}$'}
+  session: {type: string}
+  time: {type: string, pattern: '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d'}   # 写入时的真实时间（带时区）
+  elapsed_from: {type: integer, minimum: 0}
+  elapsed_to: {type: integer, minimum: 0}
+  clock_to: {type: string, pattern: '^day -?\d+ \d\d:\d\d$'}
+  title: {type: string, minLength: 1}
+  player: {type: string}          # 玩家原话
+  ruling: {type: string}          # 裁决、机制、出处、NPC 判断
+  narration: {type: string}       # 正文。新回合的玩家回复由 reply_scene 和正文合成。
+  reply_scene:
+    type: object
+    additionalProperties: false
+    required: [version, date, clock, weather]
+    properties:
+      version: {const: 1}
+      date: {type: string, minLength: 1}
+      clock: {type: string, pattern: '^\d\d:\d\d$'}
+      # 无雨是已有事件快照用语，新事件写晴。
+      weather: {enum: [天气未定, '地下，外界天气不可见', 无雨, 晴, 小雨, 中雨, 大雨, 小雪, 中雪, 大雪]}
+  weather_updates:
+    type: object
+    additionalProperties: false
+    required: [version, drought]
+    properties:
+      version: {const: 1}
+      drought:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [status, rain_days]
+          properties:
+            status: {enum: [drought, persists, recovering, recovered]}
+            rain_days: {type: array, uniqueItems: true, items: {type: integer, minimum: 1}}
+            persisted_on_day: {type: integer, minimum: 1}
+            recovery_due_elapsed: {type: integer, minimum: 0}
+            recovered_at_elapsed: {type: integer, minimum: 0}
+  checks: {type: string}
+  changes: {type: string}         # 动作的机制变化（引擎生成）
+  reveals: {type: string}
+  notes: {type: string}
+  ooc: {type: string}
+  correction: {type: string}
+  勘误: {type: array, items: {type: string}}
+  correction_kind: {enum: [叙事, 知情, 归属, 时间, 设定, 规则, 其他]}
+  caught_by: {enum: [玩家, 主持]}
+  recalled: {type: string}
+  resume: {type: string}
+  ops:                            # 本回合的动作（掷骰结果也存在这里，中断后按它重算）
+    type: array
+    items: {type: object, required: [op], properties: {op: {type: string}}}
+  quest_updates:                  # 本回合已公开的任务记录，供重放直接恢复
+    type: object
+    additionalProperties: false
+    required: [live, closed]
+    properties:
+      live: {type: array, items: {type: object, required: [id, quest_version]}}
+      closed: {type: array, items: {type: object, required: [id, quest_version, resolved]}}
+  meta:                           # 统计用：被拒、重写、undo、发出去的和存的不一样
+    type: object
+    additionalProperties: false
+    properties:
+      performance_version: {type: integer, const: 1}
+      runtime_request_id: {type: string, minLength: 1}
+      runtime_session_id: {type: string, minLength: 1}
+      foreground_kinds: {type: array, items: {enum: [local, full]}}
+      commit_failures:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [stage, code]
+          properties:
+            stage: {enum: [input, simulate, gates, event_schema, state_validation, persist]}
+            code: {type: string}
+      rejects: {type: array, items: {type: string}}
+      rewrites: {type: array, items: {type: string}}
+      undos: {type: integer, minimum: 0}
+      final_differs: {type: boolean}
+      checks:                     # 检查注册表：本回合各条检查命中几次、被拦后哪些只补了字
+        type: object
+        additionalProperties: false
+        properties:
+          hits: {type: object, additionalProperties: {type: integer, minimum: 1}}
+          onlyfill: {type: array, items: {type: string}}
+          revised: {type: array, items: {type: string}}   # 被拦以后正文改了的检查（核对类的成效看这个）
+  tags: {type: array, items: {type: string}, uniqueItems: true}
+  present: {type: array, items: {type: string}}   # 这回合在场的人（开头、结尾在场的，中途进来的，当面开口的）；听到了的人不存，从裁决的 NPC判断 算
+  facts:                          # 事实操作（engine/facts.py；自动规则已补进去）
+    type: array
+    items:
+      type: object
+      required: [op]
+      properties:
+        op: {enum: [add, supersede, learn, believe, retract, resolve]}
+        id: {type: string}
+        fact: {type: string}
+        replaces: {type: string}
+        value: {type: string}
+        topic: {type: string}
+        about: {type: array, items: {type: string}}
+        vis: {enum: [公开, 私下, 世界]}
+        kind: {enum: [事实, 秘密, 心境, 打算, 约定]}
+        knowers: {type: object, additionalProperties: {type: string}}
+        who: {type: string}
+        how: {type: string}
+        via: {type: string}
+        wrong: {type: string}
+        why: {type: string}
+        secret: {type: string}           # v4：发现了秘密清单里的哪一条
+        toward: {type: string}           # 心里：对谁
+        strength: {enum: [轻, 中, 重]}
+        lasting: {enum: [短, 长]}
+        until: {type: string}            # 短的心里到期时刻
+        hint: {type: string}             # 怎样算化解
+      additionalProperties: false
+      allOf:
+        - if: {properties: {op: {const: add}}}
+          then: {required: [id, value, knowers]}
+        - if: {properties: {op: {const: supersede}}}
+          then: {required: [id, replaces, value, knowers]}
+        - if: {properties: {op: {enum: [learn, believe]}}}
+          then: {required: [fact, who]}
+        - if: {properties: {op: {const: retract}}}
+          then: {required: [fact, why]}
+        - if: {properties: {op: {const: resolve}}}
+          then: {required: [fact, how]}
+  knows:                          # v1 知情（旧式，读的时候转成二级事实；工作块 E 起由 facts 取代）
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [who, what]
+      properties:
+        who: {type: string}
+        what: {type: string}
+        about: {type: array, items: {type: string}}
+dependentRequired:
+  correction: [correction_kind, caught_by]

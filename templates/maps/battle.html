@@ -1,0 +1,206 @@
+<meta charset="utf-8">
+<title>战役战场地图</title>
+<link rel="stylesheet" href="/web/site.css">
+<style>
+/* Layout: one night-scene board on top, legend and roster below; a single dark look by design (it is always night on this map). */
+:root {
+  --night: #14171c;
+  --sand: #2a2a26;
+  --sand-line: #3a3a33;
+  --bone: #e9e2d0;
+  --dust: #a49d8b;
+  --ember: #f0a04b;
+  --cliff: #4b3a33;
+  --wagon: #7a5a3a;
+  --ally: #6fa8dc;
+  --pc: #d8894a;
+  --enemy: #d0545b;
+  --display: "Alegreya SC", "Noto Sans SC", Georgia, serif;
+  --body: "Alegreya Sans", "Noto Sans SC", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { background: var(--night); color: var(--bone); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 1.6rem; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+.meta { color: var(--dust); font-variant-numeric: tabular-nums; }
+.board { overflow: auto; max-height: 78vh; border: 1px solid var(--sand-line); border-radius: 6px; background: #0d0f12; }
+.board svg { display: block; }
+.cellhit { fill: transparent; cursor: crosshair; }
+.cellhit:hover { fill: rgba(240,160,75,.12); }
+.coord { fill: var(--dust); font: 500 11px var(--body); }
+.tok text { font: 700 15px var(--body); fill: #111; pointer-events: none; }
+.tok .lbl { font: 500 11px var(--body); fill: var(--bone); }
+.measure { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; color: var(--dust); }
+.measure strong { color: var(--ember); font-variant-numeric: tabular-nums; font-size: 1.1rem; }
+.measure button { font: inherit; color: var(--bone); background: var(--sand); border: 1px solid var(--sand-line); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.measure button:focus-visible, .cellhit:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+.cols > section { min-width: 0; }
+h2 { font-family: var(--display); font-size: 1.05rem; letter-spacing: .06em; margin: 0 0 8px; color: var(--ember); }
+ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+li { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; }
+li .pos { color: var(--dust); font-variant-numeric: tabular-nums; }
+li small { color: var(--dust); display: block; }
+.note { color: var(--dust); margin: 0; }
+</style>
+
+<nav class="cc-nav"><a href="/">图库</a><a href="/web/novel.html">小说</a><a href="/maps/atlas.html">战役地图</a><a href="/maps/battle.html" class="on">战场地图</a></nav>
+<div class="wrap">
+  <header>
+    <h1 id="scene">Battle map</h1>
+    <div class="meta" id="meta"></div>
+  </header>
+  <div class="board"><svg id="map" role="img" aria-label="Battle map"></svg></div>
+  <div class="measure" aria-live="polite">
+    <span id="measureText">点击两个格子量距离（5 尺一格，斜走也算 5 尺）。</span>
+    <button id="clearMeasure" type="button">清除</button>
+  </div>
+  <div class="cols">
+    <section><h2>在场</h2><ul id="roster"></ul></section>
+    <section><h2>图例</h2><ul id="legend"></ul><p class="note" id="note"></p></section>
+  </div>
+</div>
+
+<script>
+const FALLBACK = null;
+const C = 52, PAD = 26;
+const NS = "http://www.w3.org/2000/svg";
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const colName = i => (i >= 26 ? LETTERS[Math.floor(i / 26) - 1] : "") + LETTERS[i % 26];
+const colIndex = s => s.length === 1 ? LETTERS.indexOf(s) : (LETTERS.indexOf(s[0]) + 1) * 26 + LETTERS.indexOf(s[1]);
+const el = (t, a = {}, parent) => { const n = document.createElementNS(NS, t); for (const k in a) n.setAttribute(k, a[k]); if (parent) parent.appendChild(n); return n; };
+const parse = c => { const m = /^([A-Z]+)(\d+)$/.exec(c); return { x: colIndex(m[1]), y: parseInt(m[2], 10) - 1 }; };
+// 地形可写单格 "C4" 或矩形区间 "C1:F7"
+const expand = list => list.flatMap(c => { if (typeof c !== "string" || !c.includes(":")) return [c]; const [a, b] = c.split(":").map(parse), out = []; for (let x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) for (let y = Math.min(a.y, b.y); y <= Math.max(a.y, b.y); y++) out.push(colName(x) + (y + 1)); return out; });
+const center = c => { const p = parse(c); return { cx: PAD + p.x * C + C / 2, cy: PAD + p.y * C + C / 2 }; };
+const colors = { pc: "var(--pc)", ally: "var(--ally)", enemy: "var(--enemy)", neutral: "#b7a7cd", object: "#9270bb" };
+
+function draw(d) {
+  document.title = (d.scene || '战场地图') + ' · 战场地图';
+  document.getElementById("scene").textContent = d.scene;
+  document.getElementById("meta").textContent = d.time + (d.round ? ` · 第 ${d.round} 轮` : " · 未进入战斗");
+  document.getElementById("note").textContent = d.note || "";
+  const W = PAD + d.cols * C + 8, H = PAD + d.rows * C + 8;
+  const svg = document.getElementById("map");
+  svg.innerHTML = "";
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  // 一格固定 5 尺；图大就缩小格子（最小六成），再大就出滚动条
+  const k = Math.max(0.6, Math.min(1, 940 / W));
+  svg.setAttribute("width", Math.round(W * k));
+  svg.setAttribute("height", Math.round(H * k));
+  const defs = el("defs", {}, svg);
+  const g = el("radialGradient", { id: "glow" }, defs);
+  el("stop", { offset: "0%", "stop-color": "#f0a04b", "stop-opacity": ".55" }, g);
+  el("stop", { offset: "50%", "stop-color": "#f0a04b", "stop-opacity": ".22" }, g);
+  el("stop", { offset: "100%", "stop-color": "#f0a04b", "stop-opacity": "0" }, g);
+  const rock = el("pattern", { id: "rock", width: 12, height: 12, patternUnits: "userSpaceOnUse" }, defs);
+  el("rect", { width: 12, height: 12, fill: "#4b3a33" }, rock);
+  el("path", { d: "M0 12 L12 0 M-3 3 L3 -3 M9 15 L15 9", stroke: "#2f2420", "stroke-width": 2 }, rock);
+
+  el("rect", { x: PAD, y: PAD, width: d.cols * C, height: d.rows * C, fill: "#1d1e1b" }, svg);
+  const T = k => expand((d.terrain || {})[k] || []);
+  // fire 可写 "G8" 或 {cell, bright, dim}；字符串按无光圈处理
+  const FIRE = T("fire").map(f => typeof f === "string" ? { cell: f, bright: 0, dim: 0 } : f);
+  for (const [k, col] of [["water", "#1f3a4f"], ["deep", "#142838"], ["boat", "#6b4f33"]]) for (const c of T(k)) { const p = parse(c); el("rect", { x: PAD + p.x * C, y: PAD + p.y * C, width: C, height: C, fill: col }, svg); }
+  for (const f of FIRE) {
+    const { cx, cy } = center(f.cell);
+    el("circle", { cx, cy, r: (f.bright + f.dim) / (window.SCALE || 5) * C + C / 2, fill: "url(#glow)" }, svg);
+  }
+  for (let x = 0; x <= d.cols; x++) el("line", { x1: PAD + x * C, y1: PAD, x2: PAD + x * C, y2: PAD + d.rows * C, stroke: "#3a3a33", "stroke-width": 1 }, svg);
+  for (let y = 0; y <= d.rows; y++) el("line", { x1: PAD, y1: PAD + y * C, x2: PAD + d.cols * C, y2: PAD + y * C, stroke: "#3a3a33", "stroke-width": 1 }, svg);
+  for (let x = 0; x < d.cols; x++) el("text", { x: PAD + x * C + C / 2, y: PAD - 9, "text-anchor": "middle", class: "coord" }, svg).textContent = colName(x);
+  for (let y = 0; y < d.rows; y++) el("text", { x: PAD - 8, y: PAD + y * C + C / 2 + 4, "text-anchor": "end", class: "coord" }, svg).textContent = y + 1;
+
+  for (const c of T("cliff")) { const p = parse(c); el("rect", { x: PAD + p.x * C, y: PAD + p.y * C, width: C, height: C, fill: "url(#rock)" }, svg); }
+  for (const c of T("wagon")) {
+    const p = parse(c), x = PAD + p.x * C, y = PAD + p.y * C;
+    el("rect", { x: x + 6, y: y + 10, width: C - 12, height: C - 20, rx: 4, fill: "#7a5a3a", stroke: "#2b1f14", "stroke-width": 2 }, svg);
+    el("path", { d: `M${x + 6} ${y + 18} Q${x + C / 2} ${y + 2} ${x + C - 6} ${y + 18}`, fill: "#c9bb98", stroke: "#2b1f14", "stroke-width": 1.5 }, svg);
+    for (const wx of [x + 12, x + C - 12]) el("circle", { cx: wx, cy: y + C - 10, r: 5, fill: "#2b1f14" }, svg);
+  }
+  for (const c of T("mule")) {
+    const { cx, cy } = center(c);
+    el("ellipse", { cx, cy: cy + 2, rx: 15, ry: 9, fill: "#8a7a66" }, svg);
+    el("ellipse", { cx: cx + 15, cy: cy - 6, rx: 6, ry: 5, fill: "#8a7a66" }, svg);
+    el("path", { d: `M${cx + 16} ${cy - 11} l2 -8 l2 8 M${cx + 12} ${cy - 11} l1 -7 l2 7`, stroke: "#8a7a66", "stroke-width": 2, fill: "none" }, svg);
+    for (const lx of [-9, -3, 6, 11]) el("line", { x1: cx + lx, y1: cy + 9, x2: cx + lx, y2: cy + 18, stroke: "#8a7a66", "stroke-width": 2.5 }, svg);
+  }
+  for (const f of FIRE) {
+    const { cx, cy } = center(f.cell);
+    el("path", { d: `M${cx - 10} ${cy + 12} L${cx + 10} ${cy + 12} M${cx - 8} ${cy + 15} L${cx + 8} ${cy + 9}`, stroke: "#5a3a22", "stroke-width": 4 }, svg);
+    el("path", { d: `M${cx} ${cy - 16} C${cx + 12} ${cy - 4} ${cx + 9} ${cy + 10} ${cx} ${cy + 10} C${cx - 9} ${cy + 10} ${cx - 12} ${cy - 4} ${cx} ${cy - 16} Z`, fill: "#f0a04b" }, svg);
+    el("path", { d: `M${cx} ${cy - 6} C${cx + 6} ${cy + 1} ${cx + 4} ${cy + 9} ${cx} ${cy + 9} C${cx - 4} ${cy + 9} ${cx - 6} ${cy + 1} ${cx} ${cy - 6} Z`, fill: "#ffe08a" }, svg);
+  }
+  for (const t of d.tokens) {
+    // size：占几格见方（大型 2、巨型 3），cell 是左上角
+    const n = t.size || 1, p0 = parse(t.cell), cx = PAD + p0.x * C + n * C / 2, cy = PAD + p0.y * C + n * C / 2;
+    if (n > 1) el("rect", { x: PAD + p0.x * C + 2, y: PAD + p0.y * C + 2, width: n * C - 4, height: n * C - 4, rx: 8, fill: "none", stroke: colors[t.side], "stroke-width": 2, "stroke-dasharray": "5 4" }, svg);
+    const grp = el("g", { class: "tok" }, svg);
+    el("circle", { cx, cy: cy - 4, r: 17, fill: colors[t.side], stroke: t.side === "enemy" ? "#4a1416" : "#111", "stroke-width": 2.5 }, grp);
+    el("text", { x: cx, y: cy + 1, "text-anchor": "middle" }, grp).textContent = t.short;
+    el("text", { x: cx, y: cy + 23, "text-anchor": "middle", class: "lbl" }, grp).textContent = t.name + (t.alt ? ` ↑${t.alt}尺` : "");
+  }
+  for (let y = 0; y < d.rows; y++) for (let x = 0; x < d.cols; x++) {
+    const cell = colName(x) + (y + 1);
+    const r = el("rect", { x: PAD + x * C, y: PAD + y * C, width: C, height: C, class: "cellhit", tabindex: 0, "aria-label": cell }, svg);
+    r.addEventListener("click", () => pick(cell));
+    r.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(cell); } });
+  }
+  measureLayer = el("g", {}, svg);
+
+  const roster = document.getElementById("roster");
+  roster.innerHTML = "";
+  for (const t of d.tokens) {
+    const li = document.createElement("li");
+    li.innerHTML = `<svg viewBox="0 0 30 30" width="30" height="30" style="min-width:0"><circle cx="15" cy="15" r="12" fill="${colors[t.side]}"/><text x="15" y="20" text-anchor="middle" style="font:700 13px var(--body);fill:#111">${t.short}</text></svg><span>${t.name}<small>${t.status}</small></span><span class="pos">${t.cell}${t.alt ? " ↑" + t.alt : ""}</span>`;
+    roster.appendChild(li);
+  }
+  for (const o of d.offmap || []) {
+    const li = document.createElement("li");
+    li.innerHTML = `<svg viewBox="0 0 30 30" width="30" height="30"><circle cx="15" cy="15" r="12" fill="none" stroke="var(--enemy)" stroke-width="2" stroke-dasharray="4 3"/></svg><span>${o.name}<small>${o.status}</small></span><span class="pos">${o.where}</span>`;
+    roster.appendChild(li);
+  }
+  const legend = document.getElementById("legend");
+  legend.innerHTML = (d.legend || [
+    ["#4b3a33", "崖壁，无法通行"], ["#7a5a3a", "货车，挡路并提供掩护"], ["#8a7a66", "骡子（拴着）"],
+    ["#f0a04b", "火堆：亮光 20 尺，昏光再 20 尺"], ["var(--pc)", "你"], ["var(--ally)", "同伴"], ["var(--enemy)", "敌人"]
+  ]).map(([c, t]) => `<li><svg viewBox="0 0 30 30" width="30" height="30"><rect x="4" y="4" width="22" height="22" rx="4" fill="${c}"/></svg><span>${t}</span><span></span></li>`).join("");
+}
+
+let measureLayer, first = null;
+function pick(cell) {
+  const text = document.getElementById("measureText");
+  if (!first) { first = cell; measureLayer.innerHTML = ""; mark(cell); text.textContent = `起点 ${cell}，再点一个格子。`; return; }
+  const a = parse(first), b = parse(cell);
+  const ft = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) * (window.SCALE || 5);
+  mark(cell);
+  const p = center(first), q = center(cell);
+  el("line", { x1: p.cx, y1: p.cy, x2: q.cx, y2: q.cy, stroke: "#f0a04b", "stroke-width": 2.5, "stroke-dasharray": "6 4" }, measureLayer);
+  text.innerHTML = `${first} → ${cell}：<strong>${ft} 尺</strong>`;
+  first = null;
+}
+function mark(cell) { const p = parse(cell); el("rect", { x: PAD + p.x * C + 2, y: PAD + p.y * C + 2, width: C - 4, height: C - 4, fill: "none", stroke: "#f0a04b", "stroke-width": 2.5 }, measureLayer); }
+document.getElementById("clearMeasure").addEventListener("click", () => { first = null; if (measureLayer) measureLayer.innerHTML = ""; document.getElementById("measureText").textContent = `点击两个格子量距离（${window.SCALE || 5} 尺一格，斜走也算 ${window.SCALE || 5} 尺）。`; });
+
+// 每 2 秒读一次 positions.json，有变化就重画（主持改文件即实时显示）
+let lastText = null;
+function load() {
+  fetch("positions.json", { cache: "no-store" }).then(r => r.text()).then(txt => {
+    if (txt === lastText) return;
+    const d = JSON.parse(txt);
+    lastText = txt;
+    window.SCALE = d.scale || 5;
+    first = null;
+    document.getElementById("measureText").textContent = `点击两个格子量距离（${SCALE} 尺一格，斜走也算 ${SCALE} 尺）。`;
+    draw(d);
+  }).catch(() => {
+    if (lastText) return;
+    document.getElementById("scene").textContent = "地图数据没加载出来";
+    document.getElementById("meta").textContent = "刷新页面再试一次。";
+  });
+}
+load();
+setInterval(load, 2000);
+</script>

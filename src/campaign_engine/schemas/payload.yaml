@@ -1,0 +1,79 @@
+# turn commit 的载荷：YAML 头，一行 ---，然后是给玩家的回复正文（front matter 格式，正文不用转义）。
+#   turn commit <<'EOF'
+#   title: 问雷蒙德驴车
+#   ruling: NPC判断（雷蒙德）：……
+#   do:
+#     - advance --to 08:10 --as 醒着
+#   ---
+#   正文……
+#   EOF
+# 解析后用这份 JSON Schema 校验，出错只回出错那一项的写法（description）。接进 turn commit、加 facts 和结构化 NPC 判断
+# 是工作块 D、E 的事；字段名和事件一致。
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: campaign:payload
+title: turn commit 载荷
+type: object
+additionalProperties: false
+x-msg: {additionalProperties: 载荷只认下面这些项（turn schema payload 看全）}
+required: [title, ruling]
+properties:
+  title:
+    type: string
+    minLength: 1
+    description: 'title: 一句话标题（玩家做了什么）'
+  ruling:
+    type: string
+    minLength: 1
+    description: 'ruling: 裁决、机制、出处；NPC判断（名字）：他怎么想、决定了什么、说了哪些事实和承诺（转述，原话写在正文）。名字写在括号最前（逗号后可加注解）；在旁边听着没出声、要算他听到了，也给他写一句 NPC判断'
+  player:
+    type: string
+    description: 'player: 玩家原话（钩子会自动记，一般不用写）'
+  do:
+    type: array
+    items: {type: string, minLength: 1}
+    description: "do: 这回合的全部动作，每项和 turn do 的写法一样；turn do 试过的照抄（骰子沿用），没写 do: 就用 turn do 的。只写钟点＝今天，跨天写 D160 07:00。例：\n  - advance --to 08:10 --as 醒着\n  - pay 5sp --to 雷蒙德"
+  facts:
+    type: array
+    items: {type: object}
+    description: "facts: 当面开口的人听到、看到的不用记——谁知道什么从开口算（这回合有 NPC判断（他）、不带 ~ 的人）；facts 只记这几样，每项以操作名开头：\n  - add: s-dragon-mira       # 塔莉娅的大秘密被谁知道了（kind: 秘密），或【可发现】的秘密透露了（加 secret: S-…）\n    value: 塔莉娅本身是红铜龙\n    kind: 秘密\n  - add: q024-date           # 转告、写信、场外听说：知情者里有不在场的人\n    value: 银号说 Nightal 17 出发\n    knowers: {法赫德: 听说 via 萨利赫}   # 在场|亲口|听说 via 谁|看到|推断|本人\n  - add: plan-x              # 约定、打算（心里用 心境:）\n    kind: 约定              # 事实 | 秘密 | 心境 | 打算 | 约定（心境、打算默认私下、只本人知道）\n    value: …\n  - supersede: q024-date     # 新值取代旧值（没得知新值的人仍是旧版）\n    value: 改到 Nightal 20\n  - learn: secret-dragon\n    who: 米拉\n    how: 亲口\n  - believe: secret-dragon\n    who: 休伯特\n    wrong: 只觉得老板不对劲\n  - retract: q024-date       # 只在更正时用\n    why: 记错了\n  - resolve: sharin-magic-secret   # 约定、打算、心里了结了（办成、说开、化解）\n    how: 莎琳自己跟扎拉说了\n发现了【可发现】里的秘密：在 add 里加 secret: S-…"
+  心境:
+    type: array
+    items: {type: object}
+    description: "心境: 会留下来的感受（一笑而过的不记），每项一条：\n  - 谁: 米拉\n    感受: 有点委屈，塔莉娅先答应天天陪莎琳练   # 用话写，不用数字\n    强: 轻              # 轻 | 中 | 重（默认轻）\n    持续: 短            # 短（轻 3 天、中 15 天、重 30 天到期）| 长（直到化解）\n    对: 塔莉娅          # 默认塔莉娅，也可以是别人\n    化解: 塔莉娅单独陪她一晚   # 可省\n    说开了: true        # 他说出口了或她看出来了（可省）\n了结用 facts 的 - resolve: 事实ID / how: 怎么了结的"
+  关系:
+    type: array
+    items: {type: object}
+    description: "关系: 两人身份变了（里程碑：表白、拜师、同住、搬走、背叛……），每项一条：\n  - 谁: 莎琳\n    加: 师徒          # 或 止: 房东；或 来历: 一句话（一起经历的大事）\n    对: 塔莉娅        # 默认塔莉娅"
+  heard:
+    type: [array, string]
+    items: {type: string}
+    description: 'heard: 玩家正文里她实际听清的传闻或主动递话 ID。供给有【短冒险入口】或【主动来找】时照其 ID 登记。主动递话还要实际接触登记的递话人，正文写出至少两个该消息特有的关键词。普通【这里在传】仍可由正文关键词识别。'
+  checks:
+    type: string
+    description: 'checks: 检定一行，“魅力(游说) +3 vs DC15, d20=5 → 8 失败”'
+  reveals: {type: string, description: 'reveals: 这回合揭示给玩家的设定'}
+  notes: {type: string, description: 'notes: 备注；确实不用处理的警告写“保留警告：为什么”'}
+  ooc: {type: string, description: 'ooc: 场外说明'}
+  correction:
+    type: string
+    description: 'correction: 旧式的更正说明（新写法用 勘误:，指明哪句错了）'
+  勘误:
+    type: array
+    items: {type: object}
+    description: "勘误: 以前事件里写错的话（同时写 correction_kind 和 caught_by），每条一项，原话照抄原文几个字（引擎核对就在那条里），以后谁打出那句都带着改正：\n  - 事件: E2902\n    原话: 小灰的鞍架上捆好灯油\n    改: 小灰 D291 就死了（E2751），驮东西的是晨星、书签\n  （可加 字段: ruling|narration|title；原话在那条里不止一处就多抄几个字）"
+  correction_kind:
+    enum: [叙事, 知情, 归属, 时间, 设定, 规则, 其他]
+    description: 'correction_kind: 叙事/知情/归属/时间/设定/规则/其他'
+  caught_by:
+    enum: [玩家, 主持]
+    description: 'caught_by: 玩家 或 主持（谁发现的）'
+  resume:
+    type: string
+    description: 'resume: 接续点（场次结束时写）'
+  tags:
+    type: [string, array]
+    items: {type: string}
+    description: 'tags: 补充标签（实体 ID，逗号分隔或列表）'
+dependentRequired:
+  correction: [correction_kind, caught_by]
+  勘误: [correction_kind, caught_by]

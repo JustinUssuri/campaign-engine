@@ -1,0 +1,68 @@
+schema_version: 8
+clock_anchor_minutes_of_day: 1080
+last_applied_event: E0001
+session:
+  id: session-001
+  status: active
+  log_dir: sessions/log
+  resume_point: E0001：1501 DR Flamerule 1 傍晚，小酒馆公共厅开场。
+scene:
+  active_pov: pc-001
+  location_id: loc-tavern
+  location_description: 小酒馆公共厅
+  present_entity_ids:
+  - pc-001
+  in_world_time:
+    campaign_day: 1
+    time_of_day: 傍晚
+    elapsed_minutes_from_opening: 0
+    calendar_date: 1501 DR Flamerule 1（夏）
+  off_scene_npcs: {}
+characters:
+  pc-001:
+    sheet: characters/player.md
+    xp: 0
+    xp_next_level: 300
+    current_form: human
+    hp_current: 12
+    hp_max: 12
+    temporary_hp: 0
+    hit_dice:
+      fighter:
+        die: d10
+        total: 1
+        expended: 0
+    conditions: []
+    concentration: null
+    last_long_rest:
+      event_id: E0001
+      started_at_elapsed: 0
+      completed_at_elapsed: 0
+      next_long_rest_earliest_elapsed: 960
+    resources:
+      second_wind:
+        current: 1
+        max: 1
+ledger:
+  accounts:
+    pc-cash:
+      owner: pc-001
+      coins: {gp: 15, sp: 0, cp: 0}
+      default: true
+  debts: []
+  receivables: []
+items:
+  item-starter-longsword:
+    type: longsword
+    owner: pc-001
+    in: pc-001
+    how: 带着
+    qty: 1
+    since: E0001
+quests: []
+quests_resolved: []
+combat: {}
+pending_action: null
+handoff: null
+schedule: {}
+npc_status: {}

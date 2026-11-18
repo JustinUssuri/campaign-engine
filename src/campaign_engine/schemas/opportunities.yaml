@@ -1,0 +1,51 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+type: object
+additionalProperties:
+  type: object
+  additionalProperties: false
+  required: [name, at, anchor_day, interval, slots, templates]
+  properties:
+    name: {type: string, minLength: 1}
+    at: {type: array, minItems: 1, uniqueItems: true, items: {type: string, pattern: '^loc-'}}
+    read_at: {type: array, minItems: 1, uniqueItems: true, items: {type: string, pattern: '^loc-'}}
+    read_description: {type: string, minLength: 1}
+    anchor_day: {type: integer, minimum: 1}
+    interval: {type: integer, minimum: 1}
+    slots: {type: integer, minimum: 1, maximum: 3}
+    note: {type: string}
+    months: {type: array, items: {type: string}, minItems: 1, uniqueItems: true}
+    templates: {type: array, minItems: 1, items: {$ref: '#/$defs/row'}}
+    initial:
+      type: array
+      items:
+        allOf:
+          - {$ref: '#/$defs/row'}
+          - {required: [id]}
+$defs:
+  row:
+    type: object
+    additionalProperties: false
+    required: [text, source]
+    properties:
+      id: {type: string, minLength: 1}
+      text: {type: string, minLength: 1}
+      source: {type: string, minLength: 1}
+      terms: {type: string}
+      price: {type: string}
+      schedule: {type: string}
+      link: {type: string}
+      season: {enum: [雨季, 旱季]}
+      status: {enum: [开放, 已报名, 已婉拒, 已结束, 已取消]}
+      until_day: {type: integer, minimum: 1}
+      review_day: {type: integer, minimum: 1}
+      depart_day: {type: integer, minimum: 1}
+      depart_at: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+      signup_until_day: {type: integer, minimum: 1}
+      signup_until_at: {type: string, pattern: '^(([01][0-9]|2[0-3]):[0-5][0-9]|日落)$'}
+      departure: {$ref: '#/$defs/range'}
+      vacancies: {$ref: '#/$defs/range'}
+  range:
+    type: array
+    minItems: 2
+    maxItems: 2
+    items: {type: integer, minimum: 0}

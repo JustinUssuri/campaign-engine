@@ -1,0 +1,9 @@
+goods:
+  arcane-focus-wand: {name: 普通魔杖法器, unit: 根, kind: misc, lb: 1, cp: 1000, cat: 法器, src: SRD5.2.1}
+  book: {name: 书籍, unit: 本, kind: misc, lb: 5, cp: 2500, cat: 书卷, src: SRD5.2.1}
+  rations: {name: 干粮, unit: 份, kind: food, lb: 2, cp: 50, cat: 食物, src: SRD5.2.1}
+  ale: {name: 麦酒（一杯）, unit: 杯, kind: food, lb: 0, cp: 4, cat: 食物, src: SRD5.2.1}
+  stew-bread: {name: 炖肉与面包, unit: 份, kind: food, lb: 0, cp: 20, cat: 食物, src: SRD5.2.1}
+  bed-inn: {name: 铜杯旅店客房（一晚）, unit: 晚, kind: service, lb: 0, cp: 50, cat: 服务, src: SRD5.2.1}
+  misc: {name: 杂项物品, unit: 件, kind: misc, lb: 1, cp: 10, cat: 杂物, src: 通用}
+places: {}

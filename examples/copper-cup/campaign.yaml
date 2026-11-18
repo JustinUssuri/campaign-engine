@@ -1,0 +1,13 @@
+title: "铜杯旅店与龙"
+protagonist:
+  id: pc-001
+  name: "塔莉娅"
+  card_name: "塔莉娅"
+  aliases: ["Thalia", "塔莉娅"]
+calendar:
+  epoch_year: 1501
+  epoch_month: Flamerule
+  epoch_day: 1
+extensions: []
+style:
+  banned_patterns: []
