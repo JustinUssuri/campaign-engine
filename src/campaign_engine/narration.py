@@ -1,67 +1,18 @@
 """本场写作材料：只派生资料，不创作事实、不登记、不调用世界层。
 
-材料是依据而非可写内容白名单。索引原句是裁决/玩家话，不能冒充逐字对白；
-回扣只提供双方实际经历过的公开正文，私人判断留在人物扮演依据中。
+材料是依据而非可写内容白名单；私人判断留在人物扮演依据中。
 """
 import copy
 import hashlib
 import json
 import re
 
-from . import config, errata, facts, index, knowledge as K, oldrec, people, persona, world
+from . import config, facts, knowledge as K, people, persona, world
 from .clock import clock, date_label
 from .store import read_events
 
-MEMORY_LIMIT = 2
-CANDIDATE_LIMIT = 8
 
-
-def memories(state, npcs, terms, limit=MEMORY_LIMIT):
-    """按话题召回，先核知情再评分；数量有硬上限，不从反应频率推性格。"""
-    if not npcs or not terms:
-        return []
-    ents = K.entities()
-    words = sorted({v for t in terms[:4] for v in K.variants(t, state, ents) if len(v) > 1})
-    if not words:
-        return []
-    raws = sorted({r for n in npcs for r in K.raw_ids(state).get(n, [])})
-    if not raws:
-        return []
-    marks = ','.join('?' for _ in raws)
-    rows = index.old_sentences(state, words, f"sent.field in ('ruling','player') and sent.evno in "
-                               f'(select evno from evp where raw in ({marks}))', raws, CANDIDATE_LIMIT)
-    if not rows:
-        return []
-    by_id = {e['id']: e for e in read_events(state)}
-    candidates = {}
-    for sid, _n, field, _speaker, text in rows:
-        eid = sid.split(':')[0]
-        e = by_id.get(eid)
-        if not e or not e.get('narration'):
-            continue
-        heard = {n for n, remote in oldrec.judges(e.get('ruling', ''), K.resolve, ents).items() if not remote}
-        who = sorted(set(npcs) & heard)
-        if not who:
-            continue
-        fixed = errata.mark_events(state, [e])[0]
-        public = fixed['narration']
-        score = sum(any(w in str(e.get(f) or '') for f in ('player', 'ruling')) for w in words)
-        row = {'event': eid, 'source': sid, 'source_field': field, 'known_by': [config.pov_id(state)] + who,
-               'record_kind': '公开场面正文，引用对白前核对说话人',
-               'text': public[:600], 'truncated': len(public) > 600,
-               'corrections': fixed.get('被更正', [])}
-        candidates[eid] = (score, int(eid[1:]), row)
-    chosen = sorted(candidates.values(), key=lambda x: (-x[0], -x[1]))[:max(0, min(limit, MEMORY_LIMIT))]
-    return [r for _score, _number, r in chosen]
-
-
-def memory_lines(state, npcs, terms):
-    return [f"【旧事可回扣·{r['event']}】{r['text']}"
-            + (f"〔更正：{r['corrections']}〕" if r['corrections'] else '')
-            + '（公开正文；按当时说话人使用，不作固定反应范本）' for r in memories(state, npcs, terms)]
-
-
-def build(state, draft, focus=()):
+def build(state, draft):
     """纯读取本会话已试算后的场面；不调用带供给/核对副作用的 show/supply。"""
     from . import turn as T
     if draft.get('_stale') or draft['after'] != state['last_applied_event']:
@@ -75,8 +26,6 @@ def build(state, draft, focus=()):
     sc = view['scene']
     npcs = [n for n in sc.get('present_entity_ids', []) if n.startswith('npc-')]
     player = (draft.get('text') or {}).get('player', '')
-    from .provision import topic_terms
-    terms = list(dict.fromkeys(list(focus) + list(topic_terms(player, ents).values())))
     ledger = facts.ledger(view)
     events = read_events(state)
 
@@ -111,7 +60,6 @@ def build(state, draft, focus=()):
                 'outcomes': T.front([x for lines in per for x in lines if not x.startswith(T.M.SECRET_MARK)]),
                 'stop': [o['stopped'] for o in ops if o.get('stopped')],
                 'public_mechanics': ctx.mech,
-                'memories': memories(state, npcs, terms),
                 'creation': '可创作普通现场言行与新事实；新事实按现有登记/动作进同一提交。未知旧事和幕后答案须查证。',
                 'audience': '主持扮演材料；人物私下依据及知情边界不可原样复述给玩家'}
     # 状态与动作即使未显示的字段变了，也不复用独立作者的旧稿。

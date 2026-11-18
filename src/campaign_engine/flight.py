@@ -387,7 +387,7 @@ def travel_speed(state, who=None, *, form=None, miles=None, riders=None):
         pid = pov_id(state)
         pname = pov_name(state)
         if who != pid:
-            raise SystemExit(f'--form 只用于 {pname} 已登记形态的只读预估')
+            raise SystemExit(f'--form 只用于{pname}已登记形态的只读预估')
         forms = (C.cards().get(pov_card_name(state)) or {}).get('形态') or {}
         selected = next((key for key, row in forms.items()
                          if form == key or form in (row.get('别名') or [])), None)
@@ -681,7 +681,7 @@ def parse(tokens):
 
 
 def apply(state, op, ctx=None):
-    who = resolve_actor(state, op['who'])
+    who = resolve_actor(state, op.get('who'))
     action = op['action']
     if action == 'check':
         return [describe(report(state, who, op.get('riders')))]

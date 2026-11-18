@@ -18,7 +18,7 @@
   turn text --title … --player … --ruling … [--checks … --reveals … --notes …
             --correction … --correction-kind … --caught-by … --facts YAML --resume … --tags …]
   turn schema [payload|event|state]（结构定义：commit 载荷、日志事件、state）
-  turn material --json [--focus 话题] [--check revision]（只读已试算场面与写作材料）
+  turn material --json [--check revision]（只读已试算场面与写作材料）
   turn show（草稿、试算、门槛预检）    turn commit [文字字段…] --narration -|"正文"（正文先过检查，再原样发给玩家）；被拒后 turn commit --sub 旧 新 只改一处    turn abort
 其他：
   narrate [--id E#### -]   Stop 钩子：核对回复
@@ -692,7 +692,6 @@ def main(argv=None, *, before_run=None):
     ts.add_parser('show')
     mt = ts.add_parser('material')
     mt.add_argument('--json', action='store_true')
-    mt.add_argument('--focus', action='append', default=[])
     mt.add_argument('--check', help='核对已有材料 revision；变化时拒绝复用旧稿')
     cm = ts.add_parser('commit')  # 也可以直接带文字字段：turn commit --title … --ruling … --narration - <<'EOF' 正文 EOF
     for k in T.FIELDS:
@@ -1081,7 +1080,7 @@ def turn_cmd(state, a):
         return T.show(state)
     if s == 'material':
         from .narration import build
-        material = build(state, T.load_turn(state), a.focus)
+        material = build(state, T.load_turn(state))
         if a.check and a.check != material['revision']:
             raise SystemExit('材料已变化：重新读取 turn material，更新依赖它的稿件')
         return json.dumps(material, ensure_ascii=False, indent=2 if a.json else None)
